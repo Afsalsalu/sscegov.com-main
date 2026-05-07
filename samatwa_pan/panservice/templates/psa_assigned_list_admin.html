@@ -1,0 +1,243 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PSA Assigned List</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+    --navy:#0a1628;
+    --bg:skyblue;
+    --card:#ffffff;
+    --border:#e2e8f0;
+    --text:#1a2a3a;
+    --yellow:#facc15;
+    --green:#16a34a;
+}
+
+body{
+    font-family:'Sora',sans-serif;
+    background:var(--bg);
+    color:var(--text);
+}
+
+.main-content{
+    padding:32px 36px;
+}
+
+/* PAGE TITLE */
+
+.page-header{
+    margin-bottom:24px;
+}
+
+.page-header h3{
+    font-size:20px;
+    font-weight:700;
+    color:var(--navy);
+}
+
+/* SECTION TITLE */
+
+.section-title{
+    margin:30px 0 14px;
+    font-weight:600;
+    font-size:16px;
+}
+
+/* TABLE CARD */
+
+.table-card{
+    background:var(--card);
+    border-radius:16px;
+    border:1.5px solid var(--border);
+    overflow-x:auto;
+}
+
+table{
+    width:100%;
+    border-collapse:collapse;
+    font-size:14px;
+    min-width:600px;
+}
+
+thead{
+    background:var(--navy);
+    color:white;
+}
+
+th,td{
+    padding:14px;
+    text-align:center;
+    border-bottom:1px solid var(--border);
+}
+
+tbody tr:hover{
+    background:rgba(0,0,0,0.03);
+}
+
+/* BADGES */
+
+.badge{
+    padding:4px 10px;
+    border-radius:6px;
+    font-size:12px;
+    font-weight:600;
+}
+
+.badge-pending{
+    background:#fef3c7;
+    color:#92400e;
+}
+
+.badge-success{
+    background:#dcfce7;
+    color:#166534;
+}
+
+/* PASSWORD STYLE */
+
+.psa-pass{
+    font-family:monospace;
+}
+
+/* RESPONSIVE */
+
+@media (max-width:768px){
+    .main-content{ padding:70px 16px; }
+}
+
+</style>
+</head>
+
+<body>
+
+{% include 'partials/admin_topbar.html' %}
+
+<div class="main-content">
+
+    <div class="page-header">
+        <h3>PSA Assigned List 🔑</h3>
+    </div>
+
+    <!-- Pending PSA -->
+    <div class="section-title">Pending PSA Work</div>
+
+    <div class="table-card">
+
+    <!-- 🔍 SEARCH -->
+        <form method="GET" style="padding:15px;">
+            <input type="text" name="q" placeholder="Search user..."
+                value="{{ query }}"
+                style="padding:6px;border:1px solid #ccc;border-radius:6px;">
+            <button class="btn btn-primary">Search</button>
+        </form>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>User ID</th>
+                    <th>User</th>
+                    <th>PSA Username</th>
+                    <th>Password</th>
+                    <th>Request</th>
+                    <th>Expiry</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+
+            <tbody>
+                {% for req in requests %}
+                <tr>
+
+                    <td>{{ req.user.id }}</td>
+                    <td>{{ req.user.username }}</td>
+                    <td>{{ req.psa_username }}</td>
+                    <td class="psa-pass">{{ req.psa_password }}</td>
+
+                    <!-- REQUEST STATUS -->
+                    <td>
+                        {% if req.request_again %}
+                            <span style="color:red;font-weight:600;">Requested 🔁</span>
+                        {% else %}
+                            <span style="color:green;">No Request</span>
+                        {% endif %}
+                    </td>
+
+                    <!-- EXPIRY TIMER -->
+                    <td>
+                        {% if req.approved_at %}
+                            {{ req.approved_at|date:"d-m-Y H:i" }}<br>
+
+                            {% with expiry=req.approved_at|date:"U"|add:"1800" %}
+                                <span class="countdown" data-expiry="{{ expiry }}" id="timer-{{ req.id }}"></span>
+                            {% endwith %}
+                        {% endif %}
+                    </td>
+
+                    <!-- ACTION BUTTON -->
+                    <td>
+                        {% if req.request_again %}
+                            <form method="POST">
+                                {% csrf_token %}
+                                <input type="hidden" name="req_id" value="{{ req.id }}">
+                                <button class="btn btn-success">Accept</button>
+                            </form>
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7">No data found</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+    </div>
+
+</div>
+<script>
+function startCountdown() {
+
+    const timers = document.querySelectorAll('.countdown');
+
+    timers.forEach(timer => {
+
+        const expiry = parseInt(timer.getAttribute('data-expiry')) * 1000;
+
+        function updateTimer() {
+            const now = new Date().getTime();
+            const distance = expiry - now;
+
+            if (distance <= 0) {
+                timer.innerHTML = "Expired ⛔";
+                timer.style.color = "red";
+                return;
+            }
+
+            const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+            const seconds = Math.floor((distance % (1000 * 60)) / 1000);
+
+            timer.innerHTML = minutes + "m " + seconds + "s";
+        }
+
+        updateTimer();
+        setInterval(updateTimer, 1000);
+    });
+}
+
+startCountdown();
+</script>
+</body>
+</html>

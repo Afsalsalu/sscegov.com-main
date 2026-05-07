@@ -1,0 +1,159 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Approve Coupon Purchase</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+
+*{box-sizing:border-box;margin:0;padding:0;}
+
+:root{
+    --navy:#0a1628;
+    --bg:skyblue;
+    --card:#ffffff;
+    --border:#e2e8f0;
+    --text:#1a2a3a;
+    --green:#16a34a;
+}
+
+body{
+    font-family:'Sora',sans-serif;
+    background:var(--bg);
+    color:var(--text);
+}
+
+/* CONTENT */
+
+.main-content{
+    padding:32px 36px;
+    max-width:600px;
+}
+
+/* TITLE */
+
+.page-header{
+    margin-bottom:22px;
+}
+
+.page-header h2{
+    font-size:20px;
+    font-weight:700;
+    color:var(--navy);
+}
+
+/* CARD */
+
+.card{
+    background:var(--card);
+    border-radius:16px;
+    border:1.5px solid var(--border);
+    padding:24px;
+}
+
+/* INFO BOX */
+
+.info-box{
+    background:#f8fafc;
+    padding:14px;
+    border-radius:10px;
+    margin-bottom:20px;
+    font-size:14px;
+}
+
+.info-box p{
+    margin-bottom:6px;
+}
+
+/* FORM */
+
+form{
+    display:flex;
+    flex-direction:column;
+    gap:14px;
+}
+
+label{
+    font-size:13px;
+    font-weight:600;
+}
+
+input{
+    padding:10px;
+    border-radius:8px;
+    border:1px solid var(--border);
+    font-size:14px;
+}
+
+/* BUTTON */
+
+.btn-submit{
+    background:var(--green);
+    color:white;
+    border:none;
+    padding:10px;
+    border-radius:8px;
+    font-size:14px;
+    font-weight:600;
+    cursor:pointer;
+}
+
+.btn-submit:hover{
+    opacity:0.9;
+}
+
+/* RESPONSIVE */
+
+@media(max-width:768px){
+    .main-content{padding:70px 16px;}
+}
+
+</style>
+</head>
+
+<body>
+
+{% include 'partials/admin_topbar.html' %}
+
+<div class="main-content">
+
+<div class="page-header">
+    <h2>Approve Coupon Purchase 🎟</h2>
+</div>
+
+<div class="card">
+
+<div class="info-box">
+    <p><strong>User:</strong> {{ req.user.username }}</p>
+    <p><strong>Quantity:</strong> {{ req.quantity }}</p>
+    <p><strong>Total Amount:</strong> ₹{{ req.total_amount }}</p>
+</div>
+
+<form method="POST">
+    {% csrf_token %}
+
+    <div>
+        <label>PSA Login ID</label>
+        <input type="text" name="psa_username" required>
+    </div>
+
+    <div>
+        <label>PSA Login Password</label>
+        <input type="text" name="psa_password" required>
+    </div>
+
+    <button type="submit" class="btn-submit">
+        Approve & Assign PSA
+    </button>
+</form>
+
+</div>
+
+</div>
+
+</body>
+</html>

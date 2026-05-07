@@ -1,0 +1,303 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>My Coupon Requests</title>
+
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <style>
+        /* ===== RESET ===== */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        /* ===== ROOT ===== */
+        :root {
+            --navy: #0a1628;
+            --primary: #0ea5e9;
+            --bg: linear-gradient(135deg, #e0f2fe, #f8fafc);
+            --card: #ffffff;
+            --border: #e2e8f0;
+            --text: #1a2a3a;
+            --muted: #64748b;
+        }
+
+        /* ===== BODY ===== */
+        body {
+            font-family: 'Sora', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+        }
+
+        /* ===== MAIN CONTENT (FIX SIDEBAR) ===== */
+        .main-content {
+            margin-left: 260px;
+            /* 🔥 fix overlap */
+            padding: 90px 20px 40px;
+            display: flex;
+            justify-content: center;
+        }
+
+        /* ===== CARD ===== */
+        .table-card {
+            background: var(--card);
+            padding: 25px;
+            border-radius: 16px;
+            width: 100%;
+            max-width: 950px;
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.08);
+        }
+
+        /* ===== TITLE ===== */
+        h2 {
+            margin-bottom: 20px;
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        /* ===== TABLE ===== */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        /* HEADER */
+        th {
+            background: #f1f5f9;
+            padding: 12px;
+            border-bottom: 1px solid var(--border);
+            text-align: center;
+            color: var(--muted);
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+
+        /* ROW */
+        td {
+            padding: 12px;
+            text-align: center;
+            border-bottom: 1px solid var(--border);
+        }
+
+        /* HOVER */
+        tbody tr:hover {
+            background: #f8fafc;
+        }
+
+        /* ===== STATUS ===== */
+        .status-approved {
+            color: #16a34a;
+            font-weight: 600;
+        }
+
+        .status-pending {
+            color: #eab308;
+            font-weight: 600;
+        }
+
+        .status-rejected {
+            color: #dc2626;
+            font-weight: 600;
+        }
+
+        /* ===== BUTTONS ===== */
+        .btn {
+            padding: 5px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            text-decoration: none;
+            display: inline-block;
+            margin: 2px;
+            transition: 0.3s;
+        }
+
+        .btn-primary {
+            background: #2563eb;
+            color: white;
+        }
+
+        .btn-success {
+            background: #16a34a;
+            color: white;
+        }
+
+        .btn:hover {
+            transform: translateY(-1px);
+            opacity: 0.9;
+        }
+
+        /* DONE TEXT */
+        td span[style] {
+            color: #dc2626 !important;
+        }
+
+        /* ===== EMPTY ===== */
+        td[colspan] {
+            text-align: center;
+            padding: 20px;
+            color: var(--muted);
+        }
+
+        /* ===== RESPONSIVE ===== */
+        @media(max-width:768px) {
+
+            .main-content {
+                margin-left: 0;
+                padding: 90px 15px 30px;
+            }
+
+            table {
+                font-size: 12px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Dynamic Topbar -->
+
+    {% if request.user.role == 'admin' %}
+        {% include 'partials/admin_topbar.html' %}
+    {% elif request.user.role == 'state' %}
+        {% include 'partials/state_topbar.html' %}
+    {% elif request.user.role == 'district' %}
+        {% include 'partials/district_topbar.html' %}
+    {% else %}
+        {% include 'partials/retailer_topbar.html' %}
+    {% endif %}
+
+    <div class="main-content">
+        <div class="table-card">
+            <h2>My Coupon Purchase Requests</h2>
+            <table>
+                <tr>
+                    <th>Quantity</th>
+                    <th>Total</th>
+                    <th>Status</th>
+                    <th>PSA</th>
+                    <th>Date</th>
+                </tr>
+                {% for req in requests %}
+                <tr>
+                    <td>{{ req.quantity }}</td>
+                    <td>₹ {{ req.total_amount|floatformat:2 }}</td>
+                    <td>
+                        {% if req.status == 'approved' %}
+                        <span class="status-approved">Approved</span>
+                        {% elif req.status == 'rejected' %}
+                        <span class="status-rejected">Rejected</span>
+                        {% else %}
+                        <span class="status-pending">Pending</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if req.status == 'approved' and req.approved_at %}
+                            {% with expiry=req.approved_at|date:"U"|add:"1800" %}
+                            <span class="countdown" data-expiry="{{ expiry }}" id="timer-{{ req.id }}">
+                            </span>
+                            <br>
+                            <a href="{% url 'view_psa_details' req.id %}" class="btn btn-primary view-btn"
+                                id="btn-{{ req.id }}">
+                                View ID
+                            </a>
+
+                            <form method="POST" action="{% url 'request_psa_again' req.id %}">
+                                {% csrf_token %}
+                                {% if req.request_again %}
+                                    <button class="btn btn-success" disabled style="opacity: 0.6; cursor: not-allowed;">
+                                        Requested ✔
+                                    </button>
+                                {% else %}
+                                    <button type="submit" class="btn btn-success request-btn" id="reqbtn-{{ req.id }}">
+                                        Request
+                                    </button>
+                                {% endif %}
+                            </form>
+                            {% endwith %}
+                        {% else %}
+                            Waiting...
+                        {% endif %}
+                    </td>
+                    <td>{{ req.created_at|date:"d-m-Y H:i" }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5">No coupon requests found.</td>
+                </tr>
+                {% endfor %}
+            </table>
+        </div>
+    </div>
+    <script>
+        setTimeout(function () {
+            location.reload();
+        }, 30000);
+    </script>
+    <script>
+        function startCountdown() {
+
+            const timers = document.querySelectorAll('.countdown');
+
+            timers.forEach(timer => {
+
+                const expiry = parseInt(timer.getAttribute('data-expiry')) * 1000;
+                const id = timer.id.split('-')[1];
+
+                const btn = document.getElementById('btn-' + id);
+                const reqBtn = document.getElementById('reqbtn-' + id);
+
+                function updateTimer() {
+
+                    const now = new Date().getTime();
+                    const distance = expiry - now;
+
+                    // ⛔ EXPIRED
+                    if (distance <= 0) {
+
+                        timer.innerHTML = 'Expired ⛔';
+                        timer.style.color = 'red';
+                        timer.style.fontWeight = '600';
+
+                        if (btn) btn.style.display = 'none';
+
+                        if (reqBtn) reqBtn.style.display = 'inline-block'; // ✅ SHOW
+
+                        return;
+                    }
+
+                    // ⏳ RUNNING TIMER
+                    const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+                    const seconds = Math.floor((distance % (1000 * 60)) / 1000);
+
+                    timer.innerHTML = minutes + "m " + seconds + "s";
+
+                    // ❌ HIDE REQUEST BUTTON BEFORE EXPIRY
+                    if (reqBtn) reqBtn.style.display = 'none';
+                }
+
+                updateTimer();
+                setInterval(updateTimer, 1000);
+            });
+        }
+
+        startCountdown();
+
+
+        // ✅ Disable after click
+        document.querySelectorAll('.request-btn').forEach(btn => {
+            btn.addEventListener('click', function () {
+                this.innerText = "Requested ✔";
+                this.disabled = true;
+            });
+        });
+    </script>
+</body>
+
+</html>
