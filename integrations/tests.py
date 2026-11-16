@@ -9,8 +9,6 @@ from django.test import Client, TestCase, override_settings
 
 from web.models import CentreUserAccount
 
-from .models import IntegrationSyncLog
-
 
 @override_settings(
     SSCEGOV_INTEGRATION_API_KEY="test-api-key",
@@ -26,11 +24,11 @@ class ExamQualifiedUserApiTests(TestCase):
             "source_system": "sscentrepreneur",
             "source_user_id": 10,
             "source_candidate_id": 20,
-            "full_name": "Qualified Candidate",
             "username": "123456789012",
             "email": "candidate@example.com",
             "mobile": "9876543210",
-            "address": "Test address",
+            "full_name": "Qualified Candidate",
+            "address": "Candidate address",
             "aadhaar_number": "123456789012",
             "exam_status": "Passed",
             "exam_completed_at": "2026-11-16T10:00:00+00:00",
@@ -50,7 +48,7 @@ class ExamQualifiedUserApiTests(TestCase):
         data.update(changes)
         return data
 
-    def request(self, payload, key="sync-20", api_key="test-api-key", secure=True):
+    def request(self, payload, api_key="test-api-key", secure=True):
         body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         timestamp = str(int(datetime.now(dt_timezone.utc).timestamp()))
         signature = hmac.new(
@@ -62,7 +60,6 @@ class ExamQualifiedUserApiTests(TestCase):
             "HTTP_X_SSCEGOV_API_KEY": api_key,
             "HTTP_X_SSCEGOV_TIMESTAMP": timestamp,
             "HTTP_X_SSCEGOV_SIGNATURE": signature,
-            "HTTP_X_SSCEGOV_IDEMPOTENCY_KEY": key,
         }
         if secure:
             headers["HTTP_X_FORWARDED_PROTO"] = "https"
@@ -73,7 +70,7 @@ class ExamQualifiedUserApiTests(TestCase):
             **headers,
         )
 
-    def test_create_and_idempotent_replay_never_duplicates(self):
+    def test_create_and_replay_never_duplicates(self):
         payload = self.payload()
         first = self.request(payload)
         second = self.request(payload)
@@ -82,75 +79,64 @@ class ExamQualifiedUserApiTests(TestCase):
         self.assertEqual(second.status_code, 200)
         self.assertEqual(CentreUserAccount.objects.count(), 1)
         self.assertEqual(get_user_model().objects.filter(username="123456789012").count(), 1)
-        self.assertEqual(IntegrationSyncLog.objects.get().request_count, 2)
 
-    def test_matching_order_uses_source_ids_then_email_then_mobile(self):
+    def test_matching_order_uses_username_then_email_then_mobile(self):
         self.assertEqual(self.request(self.payload()).status_code, 201)
 
-        by_source_user = self.payload(
-            source_candidate_id=21,
-            email="changed@example.com",
-            mobile="9876543211",
-            username="123456789013",
-        )
-        response = self.request(by_source_user, key="sync-source-user")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["matched_by"], "source_user_id")
-        self.assertEqual(CentreUserAccount.objects.count(), 1)
-
         by_email = self.payload(
-            source_user_id=11,
-            source_candidate_id=22,
-            email="changed@example.com",
-            mobile="9876543212",
-            username="123456789014",
+            username="123456789013",
+            email="candidate@example.com",
+            mobile="9876543211",
         )
-        response = self.request(by_email, key="sync-email")
+        response = self.request(by_email)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["matched_by"], "email")
         self.assertEqual(CentreUserAccount.objects.count(), 1)
 
         by_mobile = self.payload(
-            source_user_id=12,
-            source_candidate_id=23,
+            username="123456789014",
             email="new@example.com",
-            mobile="9876543212",
-            username="123456789015",
+            mobile="9876543211",
         )
-        response = self.request(by_mobile, key="sync-mobile")
+        response = self.request(by_mobile)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["matched_by"], "mobile")
         self.assertEqual(CentreUserAccount.objects.count(), 1)
 
+        by_username = self.payload(
+            username="123456789014",
+            email="another@example.com",
+            mobile="9876543212",
+        )
+        response = self.request(by_username)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["matched_by"], "username")
+        self.assertEqual(CentreUserAccount.objects.count(), 1)
+
     def test_failed_exam_and_plaintext_password_are_rejected(self):
-        failed = self.request(self.payload(exam_status="Failed"), key="sync-failed")
+        failed = self.request(self.payload(exam_status="Failed"))
         self.assertEqual(failed.status_code, 400)
         self.assertEqual(CentreUserAccount.objects.count(), 0)
-        self.assertEqual(IntegrationSyncLog.objects.get().status, IntegrationSyncLog.REJECTED)
 
-        plaintext = self.request(
-            self.payload(password="9876543210"),
-            key="sync-plaintext",
-        )
+        plaintext = self.request(self.payload(password="9876543210"))
         self.assertEqual(plaintext.status_code, 400)
         self.assertEqual(CentreUserAccount.objects.count(), 0)
-        self.assertNotIn("9876543210", IntegrationSyncLog.objects.get(idempotency_key="sync-plaintext").error_message)
 
-    def test_api_authentication_https_and_idempotency_conflict(self):
+        nested_plaintext = self.payload()
+        nested_plaintext["centre"]["password"] = "9876543210"
+        self.assertEqual(self.request(nested_plaintext).status_code, 400)
+        self.assertEqual(CentreUserAccount.objects.count(), 0)
+
+    def test_api_authentication_requires_https_and_valid_key(self):
         self.assertEqual(self.request(self.payload(), api_key="wrong").status_code, 401)
-        self.assertEqual(self.request(self.payload(), key="sync-http", secure=False).status_code, 400)
-
-        self.assertEqual(self.request(self.payload(), key="sync-conflict").status_code, 201)
-        conflict = self.request(
-            self.payload(full_name="Different Payload"),
-            key="sync-conflict",
-        )
-        self.assertEqual(conflict.status_code, 409)
-        self.assertEqual(CentreUserAccount.objects.count(), 1)
+        self.assertEqual(self.request(self.payload(), secure=False).status_code, 400)
 
     def test_compatible_hash_is_preserved_on_destination_user(self):
         self.assertEqual(self.request(self.payload()).status_code, 201)
         account = CentreUserAccount.objects.get()
         self.assertTrue(check_password("9876543210", account.user.password))
-        self.assertEqual(account.exam_status, "Passed")
-        self.assertEqual(account.source_candidate_id, 20)
+
+        update = self.payload(email="updated@example.com", password_hash=None)
+        self.assertEqual(self.request(update).status_code, 200)
+        account.refresh_from_db()
+        self.assertTrue(check_password("9876543210", account.user.password))

@@ -143,19 +143,6 @@ DATABASES = {
     }
 }
 
-# Production database credentials are supplied by the server environment.
-# Keep non-secret defaults for local checks, but never commit a password
-# fallback that could override the server's configured credentials.
-DATABASES["default"].update(
-    {
-        "NAME": config("DB_NAME", default=DATABASES["default"]["NAME"]),
-        "USER": config("DB_USER", default=DATABASES["default"]["USER"]),
-        "PASSWORD": config("DB_PASSWORD", default=""),
-        "HOST": config("DB_HOST", default=DATABASES["default"]["HOST"]),
-        "PORT": config("DB_PORT", default=DATABASES["default"]["PORT"]),
-    }
-)
-
 # Password validation
 # https://docs.djangoproject.com/en/5.0/ref/settings/#auth-password-validators
 

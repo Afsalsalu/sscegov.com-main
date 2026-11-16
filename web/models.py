@@ -412,20 +412,6 @@ class CentreUserAccount(models.Model):
     is_approved = models.BooleanField(default=False)
     is_olduser = models.BooleanField(default=False)
     another_name = models.CharField(max_length=1025, default='-', blank=True)
-    source_system = models.CharField(max_length=64, default="", blank=True, db_index=True)
-    source_user_id = models.PositiveBigIntegerField(null=True, blank=True, db_index=True)
-    source_candidate_id = models.PositiveBigIntegerField(null=True, blank=True, db_index=True)
-    exam_status = models.CharField(max_length=32, default="", blank=True)
-    exam_completed_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=("source_system", "source_candidate_id"),
-                name="web_centre_source_candidate_uniq",
-            ),
-        ]
-
     def __str__(self):
         return self.owner_centre
 
