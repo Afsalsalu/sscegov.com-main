@@ -220,13 +220,13 @@
                             <label>PIN Code</label>
                             <input type="text" name="pin_code">
                         </div>
-                        <div>
+                        <!-- <div>
                             <label> UPI ID </label>
                             <input type="text" min="0" step="1" name="upi_id">
-                        </div>
+                        </div> -->
                         <div>
                             <label> Account Type </label>
-                            <select name="role" required>
+                            <select name="role" id="account_type" onchange="updateUtiPanPrice()" required>
 
                                 <option value="">------</option>
 
@@ -247,7 +247,7 @@
                         </div>
                         <div>
                             <label> UTI PAN Price(93+) </label>
-                            <input type="number" name="uti_price" min="93">
+                            <input type="number" name="uti_price" id="uti_price" min="93">
                         </div>
                         <div>
                             <label>NSDL PAN Price(100+)</label>
@@ -258,35 +258,57 @@
                 </form>
             </div>
             <a href="{% url 'admin_dashboard' %}" class="back-link">
-                ⬅ Back
+                 Back
             </a>
         </div>
     </div>
 
-    <script>
-        document.getElementById('state').addEventListener('change', function(){
-            let stateId = this.value;
-            let districtSelect = document.getElementById('district');
+<script>
 
-            districtSelect.innerHTML = '<option value="">------</option>';
+function updateUtiPanPrice() {
+    const accountType = document.getElementById('account_type').value;
+    const utiPrice = document.getElementById('uti_price');
 
-            if (stateId === ''){
-                return;
-            }
+    const prices = {
+        state: 97,
+        district: 100,
+        retailer: 107
+    };
 
-            fetch(`/get-districts/?state_id=${stateId}`)
-            .then(response => response.json())
-            .then(data=>{
-                data.districts.forEach(function(district){
-                    let option = document.createElement('option')
-                    option.value = district.id;
-                    option.text = district.name
-                    districtSelect.appendChild(option)
-                })
-            })
+    if (prices[accountType]) {
+        utiPrice.value = prices[accountType];
+    }
+}
+
+document.getElementById('state').addEventListener('change', function () {
+
+    let stateId = this.value;
+    let districtSelect = document.getElementById('district');
+
+    districtSelect.innerHTML = '<option value="">------</option>';
+
+    if (stateId === '') {
+        return;
+    }
+
+    fetch(`{% url 'get_districts' %}?state_id=${stateId}`)
+        .then(response => response.json())
+        .then(data => {
+
+            data.districts.forEach(function (district) {
+
+                let option = document.createElement('option');
+
+                option.value = district.id;
+                option.text = district.name;
+
+                districtSelect.appendChild(option);
+            });
+
         });
-    </script>
 
+});
+</script>
 </body>
 
 </html>

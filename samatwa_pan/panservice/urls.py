@@ -59,10 +59,15 @@ urlpatterns = [
     path('buy-coupons/', views.buy_coupons, name='buy_coupons'),
     path('coupon-requests/', views.coupon_requests_admin, name='coupon_requests_admin'),
     path('my-coupon-requests/',views. my_coupon_requests, name='my_coupon_requests'),
+    path('psa-lifecycle/<int:req_id>/', views.update_psa_lifecycle, name='update_psa_lifecycle'),
     path('approve-coupon/<int:req_id>/',views. approve_coupon_psa, name='approve_coupon_psa'),
     path('view-psa/<int:req_id>/', views.view_psa_details, name='view_psa_details'),
     path('psa-assigned-list/',views. psa_assigned_list_admin, name='psa_assigned_list_admin'),
+    path('psa-assigned-list/update-password/', views.update_psa_assigned_password, name='update_psa_assigned_password'),
     path('request_psa_again/<int:req_id>/', views.request_psa_again, name = 'request_psa_again'),
+    path('psa-rerequests/', views.psa_rerequests_admin, name='psa_rerequests_admin'),
+    path('psa-rerequests/<int:req_id>/approve/', views.approve_psa_rerequest, name='approve_psa_rerequest'),
+    path('psa-rerequests/update-password/', views.update_psa_rerequest_password, name='update_psa_rerequest_password'),
     # path('mark-done/<int:req_id>/',views. mark_done_psa, name='mark_done_psa'),
     path('my-commissions/', views.my_commissions, name='my_commissions'),
     path('admin-commission-dashboard/', views.admin_commission_dashboard, name='admin_commission_dashboard'),
@@ -77,4 +82,11 @@ urlpatterns = [
     path('password-change-done/',views. password_change_done, name='password_change_done'),
     path('commission-withdraw/', views.admin_commission_withdraw, name='admin_commission_withdraw'),
     path('admin/all-commissions/', views. admin_all_commissions, name='admin_all_commissions'),
+    
+    # PSA Master
+    path('psa-master/', views.psa_master_list, name='psa_master_list'),
+    path('psa-master/all-history/', views.all_psa_history, name='all_psa_history'),
+    path('psa-master/add/', views.psa_master_add, name='psa_master_add'),
+    path('psa-master/edit/<int:pk>/', views.psa_master_edit, name='psa_master_edit'),
+    path('psa-master/delete/<int:pk>/', views.psa_master_delete, name='psa_master_delete'),
 ]

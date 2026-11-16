@@ -21,7 +21,8 @@ from .models import (
     CommissionWithdrawRequest,
     CouponPurchase,
     RoleRegistrationCharge,
-    RoleCouponPrice
+    RoleCouponPrice,
+    PSAMaster
 )
 
 User = get_user_model()
@@ -152,9 +153,18 @@ class CouponPurchaseAdmin(admin.ModelAdmin):
         'quantity',
         'total_amount',
         'status',
+        'psa_status',
+        'submission_id',
+        'amount_deducted',
         'done',
         'created_at'
     )
 
-    list_filter = ('status', 'done')
+    list_filter = ('status', 'psa_status', 'amount_deducted', 'done')
     search_fields = ('user__username',)
+
+@admin.register(PSAMaster)
+class PSAMasterAdmin(admin.ModelAdmin):
+    list_display = ('psa_login_id', 'balance', 'status', 'created_at')
+    list_filter = ('status',)
+    search_fields = ('psa_login_id',)

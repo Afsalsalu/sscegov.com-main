@@ -13,7 +13,7 @@ from django.db import transaction
 import random
 import string
 from django.db.models import Sum
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from django.contrib.auth import logout
 import uuid
 from django.contrib.auth.forms import SetPasswordForm
@@ -39,7 +39,8 @@ from .models import (
     CommissionWallet,
     RoleRegistrationCharge,
     CommissionTransaction,
-    CommissionWithdrawRequest
+    CommissionWithdrawRequest,
+    PSAMaster
 )
 from django.core.paginator import Paginator
 from django.db.models import Q
@@ -179,7 +180,7 @@ def register_view(request):
         amount = user.registration_fee
 
         # Your UPI ID
-        upi_id = "janasahayakendram@oksbi"
+        upi_id = "8304991136@cnrb"
 
         # UPI Payment String
         upi_link = f"upi://pay?pa={upi_id}&pn=SSC%20Pan%20Service&am={amount}&cu=INR"
@@ -597,8 +598,6 @@ def admin_change_user_password(request, user_id):
     return render(request, "admin_change_password.html", {
         "target_user": user
     })
-
-
 
 
 @login_required
@@ -1298,10 +1297,11 @@ def add_money(request):
 
 @login_required
 def add_money_proceed(request):
+    
     if request.method == "POST":
         form = WalletRequestForm(request.POST)
         if form.is_valid():
-            amount = form.cleaned_data['amount']
+            amount = form.cleaned_data['amount'] * Decimal("107")
 
             wallet_req = WalletRequest.objects.create(
                 user=request.user,
@@ -1309,8 +1309,8 @@ def add_money_proceed(request):
                 status='pending'
             )
 
-            upi_id = "janasahayakendram@oksbi"
-            name = 'Mikhthad T T'
+            upi_id = "8304991136@cnrb"
+            name = 'JANASAHAYA KENDRAM CHARITABLE SOCIETY'
             upi_link = f"upi://pay?pa={upi_id}&pn={name}&am={amount}&cu=INR"
 
             qr = qrcode.make(upi_link)
@@ -1475,6 +1475,7 @@ def all_transactions(request):
     if end_date:
         transactions = transactions.filter(created_at__date__lte = end_date)
 
+    
 
     paginator = Paginator(transactions, 10)
     page_number = request.GET.get('page')
@@ -1657,6 +1658,182 @@ def my_coupon_requests(request):
     return render(request, 'my_coupon_requests.html', {'requests': requests})
 
 
+def _sync_psa_master_status(req):
+    if req.psa_username:
+        PSAMaster.objects.filter(psa_login_id=req.psa_username).update(status=req.psa_status)
+
+
+def _deduct_psa_processing_amount(req):
+    if req.amount_deducted:
+        return
+
+    admin = User.objects.filter(role='admin').first()
+    if not admin:
+        raise ValueError("Admin user not found.")
+
+    retailer_amount = Decimal("107")
+    admin_amount = Decimal("93")
+    retailer_wallet, _ = Wallet.objects.select_for_update().get_or_create(user=req.user)
+    admin_wallet, _ = Wallet.objects.select_for_update().get_or_create(user=admin)
+
+    if retailer_wallet.balance < retailer_amount:
+        raise ValueError("Insufficient retailer wallet balance.")
+    if admin_wallet.balance < admin_amount:
+        raise ValueError("Insufficient admin wallet balance.")
+
+    retailer_opening = retailer_wallet.balance
+    admin_opening = admin_wallet.balance
+    retailer_wallet.balance = retailer_opening - retailer_amount
+    admin_wallet.balance = admin_opening - admin_amount
+    retailer_wallet.save(update_fields=['balance'])
+    admin_wallet.save(update_fields=['balance'])
+
+    WalletTransaction.objects.create(
+        user=req.user,
+        amount=retailer_amount,
+        txn_type='debit',
+        opening_balance=retailer_opening,
+        closing_balance=retailer_wallet.balance,
+        description=f"PSA processing deduction for request #{req.id}"
+    )
+    WalletTransaction.objects.create(
+        user=admin,
+        amount=admin_amount,
+        txn_type='debit',
+        opening_balance=admin_opening,
+        closing_balance=admin_wallet.balance,
+        description=f"PSA admin deduction for request #{req.id}"
+    )
+    req.amount_deducted = True
+
+
+def _issued_psa_expired(req):
+    return (
+        req.psa_status == 'issued'
+        and req.approved_at
+        and timezone.now() > req.approved_at + timedelta(minutes=30)
+    )
+
+
+def _busy_psa_login_ids():
+    busy_ids = set()
+    active_assignments = CouponPurchase.objects.filter(
+        status='approved',
+        psa_status__in=['issued', 'started', 'partially_completed']
+    ).exclude(psa_username__isnull=True).exclude(psa_username='')
+
+    for assignment in active_assignments:
+        if assignment.psa_status == 'issued' and _issued_psa_expired(assignment):
+            continue
+        busy_ids.add(assignment.psa_username)
+
+    return busy_ids
+
+
+def _free_psa_queryset():
+    return PSAMaster.objects.exclude(
+        psa_login_id__in=_busy_psa_login_ids()
+    ).order_by('-created_at')
+
+
+def _psa_login_is_busy(psa_login_id):
+    return psa_login_id in _busy_psa_login_ids()
+
+
+@login_required
+@transaction.atomic
+def update_psa_lifecycle(request, req_id):
+    if request.method != "POST":
+        return redirect('my_coupon_requests')
+
+    req = get_object_or_404(
+        CouponPurchase.objects.select_for_update(),
+        id=req_id,
+        user=request.user,
+        status='approved'
+    )
+
+    action = request.POST.get("action")
+    submission_id = (request.POST.get("submission_id") or "").strip()
+
+    try:
+        if action == "start":
+            if req.psa_status != "issued":
+                messages.error(request, "PSA can be started only from issued status.")
+                return redirect('my_coupon_requests')
+            if _issued_psa_expired(req):
+                req.done = True
+                req.save(update_fields=['done'])
+                messages.error(request, "PSA expired. Request again.")
+                return redirect('my_coupon_requests')
+
+            req.psa_status = "started"
+            req.started_at = timezone.now()
+            req.done = False
+            req.save(update_fields=['psa_status', 'started_at', 'done'])
+            _sync_psa_master_status(req)
+            messages.success(request, "PSA marked as started.")
+
+        elif action == "partial":
+            if req.psa_status != "started":
+                messages.error(request, "PSA can be partially completed only after start.")
+                return redirect('my_coupon_requests')
+            if not submission_id:
+                messages.error(request, "Submission ID is required.")
+                return redirect('my_coupon_requests')
+
+            _deduct_psa_processing_amount(req)
+            req.psa_status = "partially_completed"
+            req.submission_id = submission_id
+            req.save(update_fields=[
+                'psa_status',
+                'submission_id',
+                'amount_deducted'
+            ])
+            _sync_psa_master_status(req)
+            messages.success(request, "PSA marked as partially completed.")
+
+        elif action == "rerequest":
+            if req.psa_status != "partially_completed":
+                messages.error(request, "Re-Request can be submitted only after partial completion.")
+                return redirect('my_coupon_requests')
+            if req.rerequest_status == "requested":
+                messages.error(request, "Re-Request already submitted. Please wait for admin approval.")
+                return redirect('my_coupon_requests')
+
+            req.rerequest_status = "requested"
+            req.rerequest_requested_at = timezone.now()
+            req.save(update_fields=['rerequest_status', 'rerequest_requested_at'])
+            messages.success(request, "Re-Request submitted successfully.")
+
+        elif action == "full":
+            if req.psa_status not in ["started", "partially_completed"]:
+                messages.error(request, "PSA can be fully completed only after start.")
+                return redirect('my_coupon_requests')
+            if req.psa_status == "partially_completed" and req.rerequest_status == "requested":
+                messages.error(request, "Please wait for admin approval before fully completing this PSA.")
+                return redirect('my_coupon_requests')
+            if req.psa_status == "partially_completed" and req.rerequest_status != "approved":
+                messages.error(request, "Please submit a Re-Request and wait for admin approval before fully completing this PSA.")
+                return redirect('my_coupon_requests')
+
+            _deduct_psa_processing_amount(req)
+            req.psa_status = "fully_completed"
+            req.completed_at = timezone.now()
+            req.done = True
+            req.save(update_fields=['psa_status', 'amount_deducted', 'completed_at', 'done'])
+            _sync_psa_master_status(req)
+            messages.success(request, "PSA marked as fully completed.")
+
+        else:
+            messages.error(request, "Invalid PSA action.")
+
+    except ValueError as e:
+        messages.error(request, str(e))
+
+    return redirect('my_coupon_requests')
+
+
 @login_required
 @transaction.atomic
 def approve_coupon_psa(request, req_id):
@@ -1676,18 +1853,49 @@ def approve_coupon_psa(request, req_id):
 
     if request.method == "POST":
 
-        psa_user = request.POST.get("psa_username")
-        psa_pass = request.POST.get("psa_password")
+        psa_id = request.POST.get("psa_id")
+        psa_balance = request.POST.get("psa_balance")
+        topup_balance = request.POST.get("topup_balance")
 
-        if not psa_user or not psa_pass:
-            messages.error(request, "PSA credentials required.")
+        if not psa_id:
+            messages.error(request, "PSA selection required.")
             return redirect('coupon_requests_admin')
 
         try:
+            psa_master = PSAMaster.objects.get(id=psa_id)
+
+            if _psa_login_is_busy(psa_master.psa_login_id):
+                messages.error(request, "Selected PSA is currently in use. Please choose a free PSA.")
+                return redirect('coupon_requests_admin')
+
+            if psa_balance and psa_master.balance is None:
+                initial_balance = Decimal(psa_balance)
+                if initial_balance < 0:
+                    raise ValueError("PSA balance cannot be negative.")
+                psa_master.balance = initial_balance
+
+            if topup_balance:
+                topup_amount = Decimal(topup_balance)
+                if topup_amount < 0:
+                    raise ValueError("Top up balance cannot be negative.")
+                psa_master.balance = (psa_master.balance or Decimal("0.00")) + topup_amount
+            
+            psa_master.status = 'issued'
+            psa_master.save(update_fields=['balance', 'status'])
+
+            psa_user = psa_master.psa_login_id
+            psa_pass = psa_master.psa_password
 
             # SAVE PSA
             req.psa_username = psa_user
             req.psa_password = psa_pass
+            req.psa_status = 'issued'
+            req.submission_id = ''
+            req.amount_deducted = False
+            req.started_at = None
+            req.completed_at = None
+            req.rerequest_status = 'none'
+            req.rerequest_requested_at = None
 
             # CHANGE STATUS → triggers model save()
             req.status = 'approved'
@@ -1696,14 +1904,21 @@ def approve_coupon_psa(request, req_id):
 
             distribute_commission(req)
 
+        except PSAMaster.DoesNotExist:
+            messages.error(request, "Invalid PSA selected.")
+            return redirect('coupon_requests_admin')
         except ValueError as e:
             messages.error(request, str(e))
+            return redirect('coupon_requests_admin')
+        except InvalidOperation:
+            messages.error(request, "Invalid PSA balance amount.")
             return redirect('coupon_requests_admin')
 
         messages.success(request, "Coupon Approved Successfully!")
         return redirect('coupon_requests_admin')
 
-    return render(request, 'approve_coupon_psa.html', {'req': req})
+    available_psas = _free_psa_queryset()
+    return render(request, 'approve_coupon_psa.html', {'req': req, 'available_psas': available_psas})
 
 
 @login_required
@@ -1713,7 +1928,19 @@ def view_psa_details(request, req_id):
     if req.user != request.user:
         return redirect('login')
 
-    if req.approved_at:
+    if req.psa_status == 'partially_completed' and req.rerequest_status == 'requested':
+        messages.error(request, "Please wait for admin approval.")
+        return redirect('my_coupon_requests')
+
+    if req.psa_status == 'partially_completed' and req.rerequest_status != 'approved':
+        messages.error(request, "Please submit a Re-Request and wait for admin approval.")
+        return redirect('my_coupon_requests')
+
+    if req.psa_status not in ['started', 'partially_completed']:
+        messages.error(request, "PSA Login ID can be viewed only after PSA is started.")
+        return redirect('my_coupon_requests')
+
+    if req.psa_status == 'issued' and req.approved_at:
         valid_until = req.approved_at + timedelta(minutes=30)
         now = timezone.now()
 
@@ -1726,8 +1953,6 @@ def view_psa_details(request, req_id):
             return redirect('my_coupon_requests')
 
     return render(request, 'view_psa_details.html', {'req': req})
-
-
 
 
 @login_required
@@ -1754,13 +1979,44 @@ def psa_assigned_list_admin(request):
         req.request_again = False
         req.done = False
         req.approved_at = timezone.now()
+        req.psa_status = 'issued'
+        req.submission_id = ''
+        req.amount_deducted = False
+        req.started_at = None
+        req.completed_at = None
+        req.rerequest_status = 'none'
+        req.rerequest_requested_at = None
 
-        req.save(update_fields=['request_again', 'done', 'approved_at'])
+        req.save(update_fields=[
+            'request_again',
+            'done',
+            'approved_at',
+            'psa_status',
+            'submission_id',
+            'amount_deducted',
+            'started_at',
+            'completed_at',
+            'rerequest_status',
+            'rerequest_requested_at'
+        ])
+        _sync_psa_master_status(req)
 
         messages.success(request, "PSA Reactivated Successfully")
         return redirect('psa_assigned_list_admin')
 
     requests = requests.order_by('-approved_at')
+
+    now = timezone.now()
+
+    for req in requests:
+        psa = PSAMaster.objects.filter(psa_login_id=req.psa_username).first()
+        req.psa_balance = psa.balance if psa else None
+        req.psa_master_status = psa.get_status_display() if psa else '-'
+        req.psa_is_expired = (
+            req.psa_status == 'issued'
+            and req.approved_at
+            and now > req.approved_at + timedelta(minutes=30)
+        )
 
     return render(request, 'psa_assigned_list_admin.html', {
         'requests': requests,
@@ -1774,11 +2030,23 @@ def request_psa_again(request, req_id):
     if req.user != request.user:
         return redirect('login')
 
+    if req.psa_status == 'partially_completed':
+        if req.rerequest_status == 'requested':
+            messages.error(request, 'Already requested. Wait for admin.')
+            return redirect('my_coupon_requests')
+
+        req.rerequest_status = 'requested'
+        req.rerequest_requested_at = timezone.now()
+        req.save(update_fields=['rerequest_status', 'rerequest_requested_at'])
+
+        messages.success(request, "Re-Request submitted successfully.")
+        return redirect('my_coupon_requests')
+
     if req.request_again:
         messages.error(request, 'Already requested. Wait for admin.')
         return redirect('my_coupon_requests')
 
-    if req.approved_at:
+    if req.psa_status == 'issued' and req.approved_at:
         valid_until = req.approved_at + timedelta(minutes=30)
         if timezone.now() < valid_until:
             messages.error(request, "You can request only after expiry.")
@@ -1790,6 +2058,151 @@ def request_psa_again(request, req_id):
 
     messages.success(request, 'PSA requested successfully')
     return redirect('my_coupon_requests')
+
+
+def _find_busy_psa_assignment(req):
+    active_statuses = ['issued', 'started', 'partially_completed']
+    others = CouponPurchase.objects.filter(
+        status='approved',
+        psa_username=req.psa_username,
+        psa_status__in=active_statuses
+    ).exclude(id=req.id).exclude(user_id=req.user_id).select_related('user')
+
+    for other in others:
+        if other.psa_status == 'issued' and _issued_psa_expired(other):
+            continue
+        return other
+
+    return None
+
+
+@login_required
+def psa_rerequests_admin(request):
+    if request.user.role != 'admin':
+        return redirect('login')
+
+    rerequests = CouponPurchase.objects.filter(
+        status='approved',
+        rerequest_status='requested'
+    ).select_related('user').order_by('-rerequest_requested_at', '-created_at')
+
+    for req in rerequests:
+        busy_assignment = _find_busy_psa_assignment(req)
+        req.busy_assignment = busy_assignment
+        req.can_approve_rerequest = busy_assignment is None
+
+    return render(request, 'psa_rerequests_admin.html', {
+        'rerequests': rerequests
+    })
+
+
+@login_required
+@transaction.atomic
+def approve_psa_rerequest(request, req_id):
+    if request.user.role != 'admin':
+        return redirect('login')
+
+    if request.method != "POST":
+        return redirect('psa_rerequests_admin')
+
+    req = get_object_or_404(
+        CouponPurchase.objects.select_for_update(),
+        id=req_id,
+        status='approved',
+        psa_status='partially_completed',
+        rerequest_status='requested'
+    )
+
+    busy_assignment = _find_busy_psa_assignment(req)
+    if busy_assignment:
+        messages.error(request, f"PSA is currently in use by {busy_assignment.user.username}.")
+        return redirect('psa_rerequests_admin')
+
+    req.rerequest_status = 'approved'
+    req.save(update_fields=['rerequest_status'])
+
+    messages.success(request, "PSA re-request approved.")
+    return redirect('psa_rerequests_admin')
+
+
+def _update_psa_master_password(psa_login_id, new_password):
+    psa_master = get_object_or_404(
+        PSAMaster.objects.select_for_update(),
+        psa_login_id=psa_login_id
+    )
+
+    psa_master.psa_password = new_password
+    psa_master.save(update_fields=['psa_password'])
+
+    return CouponPurchase.objects.filter(
+        psa_username=psa_login_id
+    ).update(psa_password=new_password)
+
+
+@login_required
+@transaction.atomic
+def update_psa_rerequest_password(request):
+    if request.user.role != 'admin':
+        return redirect('login')
+
+    if request.method != "POST":
+        return redirect('psa_rerequests_admin')
+
+    psa_login_id = (request.POST.get("psa_login_id") or "").strip()
+    new_password = (request.POST.get("new_password") or "").strip()
+
+    if not psa_login_id:
+        messages.error(request, "PSA Login ID is required.")
+        return redirect('psa_rerequests_admin')
+
+    if not new_password:
+        messages.error(request, "New password is required.")
+        return redirect('psa_rerequests_admin')
+
+    if len(new_password) < 4:
+        messages.error(request, "New password must be at least 4 characters.")
+        return redirect('psa_rerequests_admin')
+
+    updated_assignments = _update_psa_master_password(psa_login_id, new_password)
+
+    messages.success(
+        request,
+        f"Password updated for {psa_login_id}. Synced {updated_assignments} assignment(s)."
+    )
+    return redirect('psa_rerequests_admin')
+
+
+@login_required
+@transaction.atomic
+def update_psa_assigned_password(request):
+    if request.user.role != 'admin':
+        return redirect('login')
+
+    if request.method != "POST":
+        return redirect('psa_assigned_list_admin')
+
+    psa_login_id = (request.POST.get("psa_login_id") or "").strip()
+    new_password = (request.POST.get("new_password") or "").strip()
+
+    if not psa_login_id:
+        messages.error(request, "PSA Login ID is required.")
+        return redirect('psa_assigned_list_admin')
+
+    if not new_password:
+        messages.error(request, "New password is required.")
+        return redirect('psa_assigned_list_admin')
+
+    if len(new_password) < 4:
+        messages.error(request, "New password must be at least 4 characters.")
+        return redirect('psa_assigned_list_admin')
+
+    updated_assignments = _update_psa_master_password(psa_login_id, new_password)
+
+    messages.success(
+        request,
+        f"Password updated for {psa_login_id}. Synced {updated_assignments} assignment(s)."
+    )
+    return redirect('psa_assigned_list_admin')
 
 
 @login_required
@@ -2121,3 +2534,123 @@ def admin_all_commissions(request):
     return render(request, 'admin_all_commissions.html', {
         'data': data
     })
+
+# change  PSA master
+@login_required
+def psa_master_list(request):
+    if request.user.role != 'admin':
+        return redirect('login')
+    psas = PSAMaster.objects.all().order_by('-created_at')
+    return render(request, 'psa_master/psa_master_list.html', {'psas': psas})
+
+@login_required
+def psa_master_add(request):
+    if request.user.role != 'admin':
+        return redirect('login')
+    
+    if request.method == 'POST':
+        psa_login_id = request.POST.get('psa_login_id')
+        psa_password = request.POST.get('psa_password')
+        
+        if PSAMaster.objects.filter(psa_login_id=psa_login_id).exists():
+            messages.error(request, 'PSA Login ID already exists.')
+        else:
+            PSAMaster.objects.create(psa_login_id=psa_login_id, psa_password=psa_password)
+            messages.success(request, 'PSA Master added successfully.')
+            return redirect('psa_master_list')
+            
+    return render(request, 'psa_master/psa_master_form.html', {'action': 'Add'})
+
+@login_required
+def psa_master_edit(request, pk):
+    if request.user.role != 'admin':
+        return redirect('login')
+        
+    psa = get_object_or_404(PSAMaster, pk=pk)
+    
+    if request.method == 'POST':
+        psa_login_id = request.POST.get('psa_login_id')
+        psa_password = request.POST.get('psa_password')
+        
+        if PSAMaster.objects.filter(psa_login_id=psa_login_id).exclude(pk=pk).exists():
+            messages.error(request, 'PSA Login ID already exists.')
+        else:
+            psa.psa_login_id = psa_login_id
+            psa.psa_password = psa_password
+            psa.save()
+            messages.success(request, 'PSA Master updated successfully.')
+            return redirect('psa_master_list')
+            
+    return render(request, 'psa_master/psa_master_form.html', {'action': 'Edit', 'psa': psa})
+
+@login_required
+def psa_master_delete(request, pk):
+    if request.user.role != 'admin':
+        return redirect('login')
+        
+    psa = get_object_or_404(PSAMaster, pk=pk)
+    if request.method == 'POST':
+        psa.delete()
+        messages.success(request, 'PSA Master deleted successfully.')
+        return redirect('psa_master_list')
+    
+    return render(request, 'psa_master/psa_master_form.html', {'action': 'Delete', 'psa': psa})
+
+@login_required
+def all_psa_history(request):
+    if request.user.role != 'admin':
+        return redirect('login')
+
+    search_query = request.GET.get('psa_id', '').strip()
+    psas = PSAMaster.objects.all().order_by('-created_at')
+    
+    data = []
+    now = timezone.now()
+    
+    for psa in psas:
+        history = CouponPurchase.objects.filter(psa_username=psa.psa_login_id).order_by('-approved_at')
+        
+        active_count = 0
+        for h in history:
+            h.is_active = False
+            h.is_expired = False
+            h.lifecycle_label = h.get_psa_status_display()
+            h.lifecycle_class = 'status-active'
+            
+            if h.approved_at and not h.done:
+                valid_until = h.approved_at + timedelta(minutes=30)
+                if now <= valid_until:
+                    h.is_active = True
+                    active_count += 1
+                else:
+                    h.is_expired = True
+                    if h.psa_status == 'issued':
+                        h.lifecycle_label = 'Expired'
+                        h.lifecycle_class = 'status-expired'
+            elif h.done:
+                h.is_expired = True
+                h.lifecycle_class = 'status-complete'
+
+            if h.request_again:
+                h.lifecycle_label = 'Requested Reactivation'
+                h.lifecycle_class = 'status-pending'
+            elif h.psa_status == 'fully_completed':
+                h.lifecycle_class = 'status-complete'
+            elif h.psa_status == 'partially_completed':
+                h.lifecycle_class = 'status-partial'
+            elif h.psa_status == 'started':
+                h.lifecycle_class = 'status-started'
+
+        data.append({
+            'psa': psa,
+            'history': history,
+            'active_count': active_count
+        })
+
+    return render(request, 'psa_master/all_psa_history.html', {
+        'data': data,
+        'search_query': search_query
+    })
+
+
+

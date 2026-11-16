@@ -179,7 +179,7 @@
             <p><strong>Price per Coupon:</strong> ₹ {{ user_price|floatformat:2 }}</p>
             <p><strong>Wallet Balance:</strong> ₹ {{ wallet_balance|floatformat:2 }}</p>
 
-            <form method="POST">
+            <form method="POST" id="buy_coupon_form">
 
                 {% csrf_token %}
 
@@ -206,30 +206,45 @@
 
     <script>
 
+        const form = document.getElementById("buy_coupon_form");
         const qtyInput = document.getElementById("quantity_input");
         const unitPrice = parseFloat("{{ user_price }}");
         const walletBalance = parseFloat("{{ wallet_balance }}");
+        const addMoneyUrl = "{% url 'add_money' %}";
         const totalSpan = document.getElementById("total_amount");
         const message = document.getElementById("balance_message");
         const buyBtn = document.getElementById("buy_btn");
 
-        qtyInput.addEventListener("input", function () {
+        function calculateTotal() {
+            let qty = parseInt(qtyInput.value) || 0;
+            return qty * unitPrice;
+        }
 
-            let qty = parseInt(this.value) || 0;
-            let total = qty * unitPrice;
+        function updateCouponTotal() {
+            let total = calculateTotal();
 
             totalSpan.innerText = total.toFixed(2);
 
             if (total > walletBalance) {
                 message.innerText = "Insufficient Wallet Balance!";
-                buyBtn.disabled = true;
+                buyBtn.dataset.redirectToWallet = "true";
             }
             else {
                 message.innerText = "";
-                buyBtn.disabled = false;
+                buyBtn.dataset.redirectToWallet = "false";
             }
+        }
 
+        qtyInput.addEventListener("input", updateCouponTotal);
+
+        form.addEventListener("submit", function (event) {
+            if (buyBtn.dataset.redirectToWallet === "true") {
+                event.preventDefault();
+                window.location.href = addMoneyUrl;
+            }
         });
+
+        updateCouponTotal();
 
     </script>
 

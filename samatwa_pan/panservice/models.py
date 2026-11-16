@@ -173,6 +173,17 @@ class CouponPurchase(models.Model):
         ('approved', 'Approved'),
         ('rejected', 'Rejected'),
     )
+    PSA_STATUS_CHOICES = (
+        ('issued', 'Issued'),
+        ('started', 'Started'),
+        ('partially_completed', 'Partially Completed'),
+        ('fully_completed', 'Fully Completed'),
+    )
+    REREQUEST_STATUS_CHOICES = (
+        ('none', 'None'),
+        ('requested', 'Requested'),
+        ('approved', 'Approved'),
+    )
 
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     quantity = models.PositiveIntegerField()
@@ -181,10 +192,21 @@ class CouponPurchase(models.Model):
 
     psa_username = models.CharField(max_length=100, null=True, blank=True)
     psa_password = models.CharField(max_length=100, null=True, blank=True)
+    psa_status = models.CharField(max_length=30, choices=PSA_STATUS_CHOICES, default='issued')
+    submission_id = models.CharField(max_length=100, null=True, blank=True)
+    amount_deducted = models.BooleanField(default=False)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
 
     approved_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
     done = models.BooleanField(default=False, null=True, blank=True)
     request_again = models.BooleanField(default=False)
+    rerequest_status = models.CharField(
+        max_length=20,
+        choices=REREQUEST_STATUS_CHOICES,
+        default='none'
+    )
+    rerequest_requested_at = models.DateTimeField(null=True, blank=True)
 
 
 
@@ -219,7 +241,7 @@ class CouponPurchase(models.Model):
                     from .services import create_wallet_transaction
 
 
-                    # ✅ USE SERVICE (IMPORTANT)
+                    # ? USE SERVICE (IMPORTANT)
                     create_wallet_transaction(
                         user=self.user,
                         amount=total,
@@ -240,8 +262,6 @@ class CouponPurchase(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - {self.quantity} coupons - {self.status}"
-
-
 class CommissionTransaction(models.Model):
     TXN_CHOICES = (
         ('credit', 'Credit'),
@@ -283,3 +303,22 @@ class CommissionWallet(models.Model):
 
     def __str__(self):
         return f"{self.user.username} Commission Wallet ₹{self.balance}"
+
+class PSAMaster(models.Model):
+    STATUS_CHOICES = (
+        ('issued', 'Issued'),
+        ('started', 'Started'),
+        ('partially_completed', 'Partially Completed'),
+        ('fully_completed', 'Fully Completed'),
+    )
+
+    psa_login_id = models.CharField(max_length=150, unique=True)
+    psa_password = models.CharField(max_length=150)
+    
+    balance = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='issued')
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.psa_login_id

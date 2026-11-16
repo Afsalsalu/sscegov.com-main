@@ -106,7 +106,7 @@ class EditContactForm(forms.Form):
 
 
 class WalletRequestForm(forms.Form):
-    amount = forms.DecimalField(min_value=300, label="Enter Amount (Minimum ₹300)")
+    amount = forms.DecimalField(min_value=1, label="Enter Amount (Minimum ₹300)")
 
 
 class WithdrawForm(forms.Form):
