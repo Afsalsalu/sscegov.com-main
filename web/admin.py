@@ -419,6 +419,9 @@ class CentreUserAccountAdmin(admin.ModelAdmin):
         "email",
         "state",
         "district",
+        "source_system",
+        "source_candidate_id",
+        "exam_status",
         "is_active",
         "last_login",
         "certificate_paid_link",
@@ -434,10 +437,12 @@ class CentreUserAccountAdmin(admin.ModelAdmin):
         "created_by",
         "certificate_paid",
         "certificate_downloaded",
+        "source_system",
+        "exam_status",
     )
 
     # Search fields
-    search_fields = ("username", "email", "mobile", "aadhaar_number", "pan_card_number", "another_name", "owner_centre")
+    search_fields = ("username", "email", "mobile", "aadhaar_number", "pan_card_number", "another_name", "owner_centre", "source_system", "source_user_id", "source_candidate_id")
 
     # Ordering
     ordering = ("-id",)
@@ -506,6 +511,18 @@ class CentreUserAccountAdmin(admin.ModelAdmin):
         (
             "Certificate Info",
             {"fields": ("certificate_paid", "certificate_downloaded")},
+        ),
+        (
+            "SS Centrepreneur Integration",
+            {
+                "fields": (
+                    "source_system",
+                    "source_user_id",
+                    "source_candidate_id",
+                    "exam_status",
+                    "exam_completed_at",
+                )
+            },
         ),
     )
 

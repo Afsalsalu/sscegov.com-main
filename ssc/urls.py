@@ -35,6 +35,7 @@ urlpatterns = [
     path("exam/", include("exam.urls")),
     path("accounts/", include("registration.backends.simple.urls")),
     path("captcha/", include("captcha.urls")),
+    path("api/integrations/", include("integrations.urls")),
 
     path(".well-known/pki-validation/17184DA9C3A1EFE2D8422CDA551CA59E.txt", validation_file),
 

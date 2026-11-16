@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'crispy_bootstrap5',
     "captcha",
     "exam", 
+    "integrations",
     # "axes",
     # 'csp',
     # 'compressor',
@@ -268,6 +269,9 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 
 CSRF_FAILURE_VIEW = 'web.views.custom_csrf_failure'
+
+SSCEGOV_INTEGRATION_API_KEY = config("SSCEGOV_INTEGRATION_API_KEY", default="")
+SSCEGOV_INTEGRATION_HMAC_SECRET = config("SSCEGOV_INTEGRATION_HMAC_SECRET", default="")
 
 CSRF_TRUSTED_ORIGINS = ['https://sscegov.com', 'https://checkout.razorpay.com/v1/checkout.js']
 
