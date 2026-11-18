@@ -80,6 +80,31 @@ class ExamQualifiedUserApiTests(TestCase):
         self.assertEqual(CentreUserAccount.objects.count(), 1)
         self.assertEqual(get_user_model().objects.filter(username="123456789012").count(), 1)
 
+    def test_missing_pan_uses_fallback_for_new_account(self):
+        response = self.request(self.payload())
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(CentreUserAccount.objects.get().pan_card_number, "-")
+
+    def test_supplied_pan_is_preserved_for_new_account(self):
+        response = self.request(self.payload(pan_card_number="ABCDE1234F"))
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(CentreUserAccount.objects.get().pan_card_number, "ABCDE1234F")
+
+    def test_existing_real_pan_is_not_replaced_by_fallback(self):
+        self.assertEqual(
+            self.request(self.payload(pan_card_number="ABCDE1234F")).status_code,
+            201,
+        )
+
+        update = self.payload(email="updated@example.com")
+        self.assertNotIn("pan_card_number", update)
+        self.assertEqual(self.request(update).status_code, 200)
+
+        account = CentreUserAccount.objects.get()
+        self.assertEqual(account.pan_card_number, "ABCDE1234F")
+
     def test_matching_order_uses_username_then_email_then_mobile(self):
         self.assertEqual(self.request(self.payload()).status_code, 201)
 

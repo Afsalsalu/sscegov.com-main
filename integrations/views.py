@@ -164,6 +164,7 @@ def _validate_payload(payload):
     if payload.get("exam_status") != "Passed":
         raise PayloadError("Only Passed exam_status can be synchronized")
     _parse_datetime(payload.get("exam_completed_at"))
+    pan_card_number = str(payload.get("pan_card_number") or "").strip()
 
     centre = payload.get("centre") or {}
     if not isinstance(centre, dict):
@@ -180,6 +181,7 @@ def _validate_payload(payload):
         "email": email,
         "mobile": mobile,
         "aadhaar_number": int(aadhaar),
+        "pan_card_number": pan_card_number,
         "address": address,
         "password_hash": password_hash,
         "centre": {
@@ -301,9 +303,12 @@ def exam_qualified_user(request):
                 "location": data["centre"]["location"],
             }
             if account is None:
+                values["pan_card_number"] = data["pan_card_number"] or "-"
                 account = CentreUserAccount.objects.create(**values)
                 status = "created"
             else:
+                if data["pan_card_number"]:
+                    values["pan_card_number"] = data["pan_card_number"]
                 for field, value in values.items():
                     setattr(account, field, value)
                 account.save()
