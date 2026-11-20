@@ -1,6 +1,8 @@
 import json
 import logging
 import random
+from datetime import date, datetime
+from io import BytesIO
 
 import requests
 from django.shortcuts import render
@@ -14,10 +16,20 @@ from django.contrib.auth.views import PasswordChangeView
 from django.core import serializers
 from django.core.mail import send_mail
 from django.db import IntegrityError, transaction
-from django.http import FileResponse, HttpResponseRedirect, JsonResponse
+from django.db.models import Q
+from django.http import FileResponse, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
+from django.utils import timezone
 from django.views import View
+
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_LEFT
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.platypus import LongTable, Paragraph, SimpleDocTemplate, Spacer, TableStyle
+from xml.sax.saxutils import escape
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -62,11 +74,6 @@ from .models import (AboutBlog, AboutPage, AddState, Career, CareerForm,
                      Wallet,Table_Accountsmaster,Table_Acntchild,Table_Companydetailsmaster,Table_companyDetailschild,Table_DrCrNote,
 		     Table_Journal_Entry,Table_Contra_Entry,Ledger,
 		     Table_Voucher)
-
-from datetime import datetime
-
-
-
 
 def index(request):
     return render(request,"web/accounts/receipt/receipt.html")
@@ -855,6 +862,421 @@ class AdminCentreUserListView(AdminOrHeadOfficeRequiredMixin, ListView):
 
     def get_queryset(self):
         return CentreUserAccount.objects.all()
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["can_export_centre_users"] = (
+            self.request.user.is_staff or self.request.user.is_superuser
+        )
+        return context
+
+
+CENTRE_USER_PDF_EXCLUDED_FIELDS = {
+    "password",
+    "password_hash",
+    "last_login",
+    "is_staff",
+    "is_superuser",
+    "groups",
+    "user_permissions",
+    "permissions",
+    "permission",
+    "session",
+    "session_key",
+    "security",
+    "otp",
+    "failed_login",
+}
+
+CENTRE_USER_PDF_LABELS = {
+    "owner_centre": "Centre Name",
+    "alternative_mobile": "Alternative Mobile",
+    "aadhaar_front_side_uploading": "Aadhaar Front Document",
+    "aadhaar_back_side_uploading": "Aadhaar Back Document",
+    "aadhaar_number": "Aadhaar Number",
+    "pan_card_uploading": "PAN Card Document",
+    "pan_card_number": "PAN Card Number",
+    "sign_uploading": "Signature Document",
+    "another_document": "Other Document",
+    "centre_owner_address": "Centre Owner Address",
+    "centre_name": "Registered Centre Name",
+    "centre_phone_number": "Centre Phone Number",
+    "rural_areas": "Rural Area Type",
+    "ward_number": "Ward Number",
+    "pin_code": "PIN Code",
+    "centre_email": "Centre Email",
+    "is_active": "Status",
+    "created_by": "Created By",
+    "certificate_paid": "Certificate Paid",
+    "certificate_downloaded": "Certificate Downloaded",
+    "is_approved": "Approval Status",
+    "is_olduser": "Old User",
+    "another_name": "Other Name",
+}
+
+
+def _centre_pdf_is_sensitive_field(field_name):
+    normalized_name = field_name.lower()
+    if normalized_name in CENTRE_USER_PDF_EXCLUDED_FIELDS:
+        return True
+    return any(
+        term in normalized_name
+        for term in ("password", "token", "permission", "secret", "api_key")
+    )
+
+
+def _centre_pdf_display_value(value):
+    if value is None or value == "":
+        return "-"
+    return str(value)
+
+
+def _centre_pdf_related_value(related):
+    if related is None:
+        return "-"
+
+    values = []
+    get_full_name = getattr(related, "get_full_name", None)
+    if callable(get_full_name):
+        values.append(get_full_name())
+
+    for attribute in ("name", "owner_centre", "username", "email"):
+        value = getattr(related, attribute, None)
+        if value:
+            values.append(str(value))
+
+    if not values:
+        values.append(str(related))
+
+    unique_values = []
+    for value in values:
+        if value and value not in unique_values:
+            unique_values.append(value)
+    return " / ".join(unique_values) or "-"
+
+
+def _centre_pdf_field_value(instance, field):
+    if field.is_relation:
+        try:
+            related = getattr(instance, field.name, None)
+        except ObjectDoesNotExist:
+            related = None
+        return _centre_pdf_related_value(related)
+
+    if field.choices:
+        return _centre_pdf_display_value(
+            getattr(instance, f"get_{field.name}_display")()
+        )
+
+    value = field.value_from_object(instance)
+    if field.get_internal_type() in {"FileField", "ImageField"}:
+        return "Available" if getattr(value, "name", "") else "-"
+    if isinstance(value, datetime):
+        if timezone.is_aware(value):
+            value = timezone.localtime(value)
+        return value.strftime("%d %b %Y %I:%M %p")
+    if isinstance(value, date):
+        return value.strftime("%d %b %Y")
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    return _centre_pdf_display_value(value)
+
+
+def _centre_pdf_field_label(field):
+    return CENTRE_USER_PDF_LABELS.get(
+        field.name,
+        str(field.verbose_name).replace("_", " ").strip().title(),
+    )
+
+
+def _centre_pdf_join_values(*values):
+    joined_values = []
+    for value in values:
+        if value is None or value == "":
+            continue
+        value = str(value)
+        if value not in joined_values:
+            joined_values.append(value)
+    return " / ".join(joined_values) or "-"
+
+
+def _centre_pdf_rows(centre):
+    try:
+        related_user = centre.user
+    except ObjectDoesNotExist:
+        related_user = None
+
+    state_value = "-"
+    if centre.state:
+        state_value = centre.get_state_display()
+
+    status_value = "Active"
+    if not centre.is_active or (related_user is not None and not related_user.is_active):
+        status_value = "Inactive"
+
+    rows = [
+        ("ID", centre.formatted_id),
+        (
+            "Name",
+            _centre_pdf_join_values(centre.name, centre.owner_centre),
+        ),
+        (
+            "Username",
+            _centre_pdf_join_values(
+                centre.username,
+                getattr(related_user, "username", None),
+            ),
+        ),
+        (
+            "Email",
+            _centre_pdf_join_values(
+                centre.email,
+                getattr(related_user, "email", None),
+                centre.centre_email,
+            ),
+        ),
+        (
+            "VLC Number / Mobile",
+            _centre_pdf_join_values(
+                centre.mobile,
+                centre.alternative_mobile,
+                centre.centre_phone_number,
+            ),
+        ),
+        ("State", state_value),
+        ("District", _centre_pdf_display_value(centre.district)),
+        (
+            "Address",
+            _centre_pdf_join_values(centre.address, centre.centre_owner_address),
+        ),
+        ("Status", status_value),
+        (
+            "Joined Date",
+            _centre_pdf_field_value(related_user, User._meta.get_field("date_joined"))
+            if related_user is not None
+            else "-",
+        ),
+        ("User Account", _centre_pdf_related_value(related_user)),
+    ]
+
+    consumed_fields = {
+        "id",
+        "name",
+        "owner_centre",
+        "username",
+        "email",
+        "mobile",
+        "alternative_mobile",
+        "centre_phone_number",
+        "state",
+        "district",
+        "address",
+        "centre_owner_address",
+        "centre_email",
+        "is_active",
+        "user",
+    }
+    for field in CentreUserAccount._meta.fields:
+        if field.name in consumed_fields or _centre_pdf_is_sensitive_field(field.name):
+            continue
+        rows.append((_centre_pdf_field_label(field), _centre_pdf_field_value(centre, field)))
+
+    return rows
+
+
+class CentreUserListPDFView(AdminOrHeadOfficeRequiredMixin, View):
+    def dispatch(self, request, *args, **kwargs):
+        if request.user.is_authenticated and not (
+            request.user.is_staff or request.user.is_superuser
+        ):
+            messages.error(request, "Only Head Office staff can export centre users.")
+            return redirect("web:not_found")
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_queryset(self):
+        queryset = CentreUserAccount.objects.select_related("user", "created_by")
+        search_term = self.request.GET.get("search", "").strip()
+        if search_term:
+            queryset = queryset.filter(
+                Q(username__icontains=search_term)
+                | Q(user__username__icontains=search_term)
+                | Q(owner_centre__icontains=search_term)
+                | Q(name__icontains=search_term)
+                | Q(email__icontains=search_term)
+                | Q(user__email__icontains=search_term)
+            )
+        return queryset.order_by("pk")
+
+    def get(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        total_users = queryset.count()
+        search_term = request.GET.get("search", "").strip()
+        generated_at = timezone.localtime(timezone.now())
+        generated_at_text = generated_at.strftime("%d %b %Y %I:%M %p")
+
+        buffer = BytesIO()
+        document = SimpleDocTemplate(
+            buffer,
+            pagesize=landscape(A4),
+            leftMargin=12 * mm,
+            rightMargin=12 * mm,
+            topMargin=25 * mm,
+            bottomMargin=15 * mm,
+            title="Centre User List",
+            author="SSCEGOV Head Office",
+        )
+
+        styles = getSampleStyleSheet()
+        meta_style = ParagraphStyle(
+            "CentreUserPdfMeta",
+            parent=styles["Normal"],
+            fontName="Helvetica",
+            fontSize=8,
+            leading=10,
+            textColor=colors.HexColor("#334155"),
+            spaceAfter=5,
+        )
+        header_style = ParagraphStyle(
+            "CentreUserPdfHeader",
+            parent=styles["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=7,
+            leading=8,
+            textColor=colors.white,
+            alignment=TA_LEFT,
+        )
+        cell_style = ParagraphStyle(
+            "CentreUserPdfCell",
+            parent=styles["Normal"],
+            fontName="Helvetica",
+            fontSize=7.2,
+            leading=8.6,
+            textColor=colors.HexColor("#1e293b"),
+            alignment=TA_LEFT,
+        )
+
+        def pdf_paragraph(value, style):
+            safe_value = escape(_centre_pdf_display_value(value)).replace(
+                "\r\n", "<br/>"
+            ).replace("\n", "<br/>")
+            return Paragraph(safe_value, style)
+
+        table_data = [
+            [
+                pdf_paragraph("ID", header_style),
+                pdf_paragraph("Centre / User", header_style),
+                pdf_paragraph("Field", header_style),
+                pdf_paragraph("Value", header_style),
+            ]
+        ]
+        for centre in queryset.iterator(chunk_size=500):
+            try:
+                related_user = centre.user
+            except ObjectDoesNotExist:
+                related_user = None
+            centre_user_label = _centre_pdf_join_values(
+                centre.name or centre.owner_centre,
+                centre.username or getattr(related_user, "username", None),
+            )
+            for field_label, value in _centre_pdf_rows(centre):
+                table_data.append(
+                    [
+                        pdf_paragraph(centre.formatted_id, cell_style),
+                        pdf_paragraph(centre_user_label, cell_style),
+                        pdf_paragraph(field_label, cell_style),
+                        pdf_paragraph(value, cell_style),
+                    ]
+                )
+
+        if total_users == 0:
+            table_data.append(
+                [
+                    pdf_paragraph("No centre users found.", cell_style),
+                    "",
+                    "",
+                    "",
+                ]
+            )
+
+        user_table = LongTable(
+            table_data,
+            colWidths=[25 * mm, 48 * mm, 40 * mm, 160 * mm],
+            repeatRows=1,
+            splitByRow=1,
+            hAlign="LEFT",
+        )
+        table_commands = [
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#007A9B")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cbd5e1")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            (
+                "ROWBACKGROUNDS",
+                (0, 1),
+                (-1, -1),
+                [colors.white, colors.HexColor("#f8fafc")],
+            ),
+        ]
+        if total_users == 0:
+            table_commands.append(("SPAN", (0, 1), (-1, 1)))
+        user_table.setStyle(TableStyle(table_commands))
+
+        def draw_pdf_page(canvas, doc):
+            page_width, page_height = landscape(A4)
+            canvas.saveState()
+            canvas.setFillColor(colors.HexColor("#007A9B"))
+            canvas.rect(
+                0,
+                page_height - (17 * mm),
+                page_width,
+                17 * mm,
+                fill=1,
+                stroke=0,
+            )
+            canvas.setFillColor(colors.white)
+            canvas.setFont("Helvetica-Bold", 13)
+            canvas.drawString(doc.leftMargin, page_height - (11 * mm), "Centre User List")
+            canvas.setFont("Helvetica", 7)
+            canvas.drawRightString(
+                page_width - doc.rightMargin,
+                page_height - (11 * mm),
+                f"Generated: {generated_at_text}",
+            )
+            canvas.setStrokeColor(colors.HexColor("#cbd5e1"))
+            canvas.line(
+                doc.leftMargin,
+                12 * mm,
+                page_width - doc.rightMargin,
+                12 * mm,
+            )
+            canvas.setFillColor(colors.HexColor("#475569"))
+            canvas.setFont("Helvetica", 7)
+            canvas.drawString(
+                doc.leftMargin,
+                7 * mm,
+                "Confidential - Head Office use only",
+            )
+            canvas.drawRightString(
+                page_width - doc.rightMargin,
+                7 * mm,
+                f"Page {doc.page}",
+            )
+            canvas.restoreState()
+
+        metadata = f"Generated: {generated_at_text} &nbsp;&nbsp;|&nbsp;&nbsp; Total users: {total_users}"
+        if search_term:
+            metadata += f" &nbsp;&nbsp;|&nbsp;&nbsp; Search: {escape(search_term)}"
+        story = [Paragraph(metadata, meta_style), Spacer(1, 2 * mm), user_table]
+        document.build(story, onFirstPage=draw_pdf_page, onLaterPages=draw_pdf_page)
+
+        buffer.seek(0)
+        response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
+        response["Content-Disposition"] = 'attachment; filename="centre_user_list.pdf"'
+        return response
 
 
 class AdminCenterUserDetailView(AdminOrHeadOfficeRequiredMixin, DetailView):

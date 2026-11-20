@@ -62,6 +62,7 @@ netifaces==0.11.0
 oauthlib==3.2.0
 parsedatetime==2.6
 pdfkit==1.0.0
+reportlab==4.4.10
 pexpect==4.8.0
 pillow==10.2.0
 ptyprocess==0.7.0
