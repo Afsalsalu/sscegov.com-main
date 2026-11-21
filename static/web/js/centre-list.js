@@ -1,7 +1,8 @@
 document.addEventListener("DOMContentLoaded", function () {
     const searchInput = document.getElementById("searchInput");
-    const tableRows = document.querySelectorAll("tbody tr");
     const downloadUserListPdf = document.getElementById("downloadUserListPdf");
+    const searchForm = searchInput?.form;
+    let searchSubmitTimer;
 
     function updatePdfDownloadUrl() {
       if (!downloadUserListPdf || !searchInput) {
@@ -22,22 +23,15 @@ document.addEventListener("DOMContentLoaded", function () {
       downloadUserListPdf.href = `${exportUrl.pathname}${exportUrl.search}`;
     }
 
-    searchInput.addEventListener("input", function () {
-      const filterText = searchInput.value.toLowerCase();
-
-      tableRows.forEach(row => {
-        const ownerCentre = row.querySelector("h6")?.textContent.toLowerCase();
-        const username = row.cells[2]?.textContent.toLowerCase();
-        if (
-          (ownerCentre && ownerCentre.includes(filterText)) ||
-          (username && username.includes(filterText))
-        ) {
-          row.style.display = ""; // Show the row
-        } else {
-          row.style.display = "none"; // Hide the row
-        }
-      });
+    searchInput?.addEventListener("input", function () {
       updatePdfDownloadUrl();
+      window.clearTimeout(searchSubmitTimer);
+      searchSubmitTimer = window.setTimeout(function () {
+        const currentSearch = new URL(window.location.href).searchParams.get("search") || "";
+        if (searchInput.value.trim() !== currentSearch) {
+          searchForm?.requestSubmit();
+        }
+      }, 400);
     });
 
     updatePdfDownloadUrl();

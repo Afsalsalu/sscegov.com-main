@@ -860,16 +860,52 @@ class AdminCentreUserListView(AdminOrHeadOfficeRequiredMixin, ListView):
     model = CentreUserAccount
     template_name = "web/admin_panel/franchise/franchise_list.html"
     context_object_name = "centreusers"
+    paginate_by = 20
 
     def get_queryset(self):
-        return CentreUserAccount.objects.all()
+        queryset = CentreUserAccount.objects.select_related("user")
+        search_term = self.request.GET.get("search", "").strip()
+        if search_term:
+            queryset = queryset.filter(
+                Q(username__icontains=search_term)
+                | Q(user__username__icontains=search_term)
+                | Q(owner_centre__icontains=search_term)
+                | Q(name__icontains=search_term)
+                | Q(email__icontains=search_term)
+                | Q(user__email__icontains=search_term)
+            )
+        return queryset.order_by("pk")
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        query_params = self.request.GET.copy()
+        query_params.pop(self.page_kwarg, None)
+        context["search_term"] = self.request.GET.get("search", "").strip()
+        context["pagination_query"] = query_params.urlencode()
+        context["preserved_query_params"] = [
+            (key, value)
+            for key in query_params
+            if key != "search"
+            for value in query_params.getlist(key)
+        ]
+        paginator = context.get("paginator")
+        page_obj = context.get("page_obj")
+        if paginator and page_obj:
+            context["page_range"] = paginator.get_elided_page_range(
+                number=page_obj.number,
+                on_each_side=1,
+                on_ends=1,
+            )
         context["can_export_centre_users"] = (
             self.request.user.is_staff or self.request.user.is_superuser
         )
         return context
+
+    def paginate_queryset(self, queryset, page_size):
+        paginator = self.get_paginator(queryset, page_size)
+        page_number = self.request.GET.get(self.page_kwarg)
+        page = paginator.get_page(page_number)
+        return (paginator, page, page.object_list, page.has_other_pages())
 
 
 def _centre_pdf_clean_text(value):
