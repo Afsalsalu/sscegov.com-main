@@ -871,122 +871,10 @@ class AdminCentreUserListView(AdminOrHeadOfficeRequiredMixin, ListView):
         return context
 
 
-CENTRE_USER_PDF_EXCLUDED_FIELDS = {
-    "password",
-    "password_hash",
-    "last_login",
-    "is_staff",
-    "is_superuser",
-    "groups",
-    "user_permissions",
-    "permissions",
-    "permission",
-    "session",
-    "session_key",
-    "security",
-    "otp",
-    "failed_login",
-}
-
-CENTRE_USER_PDF_LABELS = {
-    "owner_centre": "Centre Name",
-    "alternative_mobile": "Alternative Mobile",
-    "aadhaar_front_side_uploading": "Aadhaar Front Document",
-    "aadhaar_back_side_uploading": "Aadhaar Back Document",
-    "aadhaar_number": "Aadhaar Number",
-    "pan_card_uploading": "PAN Card Document",
-    "pan_card_number": "PAN Card Number",
-    "sign_uploading": "Signature Document",
-    "another_document": "Other Document",
-    "centre_owner_address": "Centre Owner Address",
-    "centre_name": "Registered Centre Name",
-    "centre_phone_number": "Centre Phone Number",
-    "rural_areas": "Rural Area Type",
-    "ward_number": "Ward Number",
-    "pin_code": "PIN Code",
-    "centre_email": "Centre Email",
-    "is_active": "Status",
-    "created_by": "Created By",
-    "certificate_paid": "Certificate Paid",
-    "certificate_downloaded": "Certificate Downloaded",
-    "is_approved": "Approval Status",
-    "is_olduser": "Old User",
-    "another_name": "Other Name",
-}
-
-
-def _centre_pdf_is_sensitive_field(field_name):
-    normalized_name = field_name.lower()
-    if normalized_name in CENTRE_USER_PDF_EXCLUDED_FIELDS:
-        return True
-    return any(
-        term in normalized_name
-        for term in ("password", "token", "permission", "secret", "api_key")
-    )
-
-
 def _centre_pdf_display_value(value):
     if value is None or value == "":
         return "-"
     return str(value)
-
-
-def _centre_pdf_related_value(related):
-    if related is None:
-        return "-"
-
-    values = []
-    get_full_name = getattr(related, "get_full_name", None)
-    if callable(get_full_name):
-        values.append(get_full_name())
-
-    for attribute in ("name", "owner_centre", "username", "email"):
-        value = getattr(related, attribute, None)
-        if value:
-            values.append(str(value))
-
-    if not values:
-        values.append(str(related))
-
-    unique_values = []
-    for value in values:
-        if value and value not in unique_values:
-            unique_values.append(value)
-    return " / ".join(unique_values) or "-"
-
-
-def _centre_pdf_field_value(instance, field):
-    if field.is_relation:
-        try:
-            related = getattr(instance, field.name, None)
-        except ObjectDoesNotExist:
-            related = None
-        return _centre_pdf_related_value(related)
-
-    if field.choices:
-        return _centre_pdf_display_value(
-            getattr(instance, f"get_{field.name}_display")()
-        )
-
-    value = field.value_from_object(instance)
-    if field.get_internal_type() in {"FileField", "ImageField"}:
-        return "Available" if getattr(value, "name", "") else "-"
-    if isinstance(value, datetime):
-        if timezone.is_aware(value):
-            value = timezone.localtime(value)
-        return value.strftime("%d %b %Y %I:%M %p")
-    if isinstance(value, date):
-        return value.strftime("%d %b %Y")
-    if isinstance(value, bool):
-        return "Yes" if value else "No"
-    return _centre_pdf_display_value(value)
-
-
-def _centre_pdf_field_label(field):
-    return CENTRE_USER_PDF_LABELS.get(
-        field.name,
-        str(field.verbose_name).replace("_", " ").strip().title(),
-    )
 
 
 def _centre_pdf_join_values(*values):
@@ -1000,88 +888,13 @@ def _centre_pdf_join_values(*values):
     return " / ".join(joined_values) or "-"
 
 
-def _centre_pdf_rows(centre):
-    try:
-        related_user = centre.user
-    except ObjectDoesNotExist:
-        related_user = None
-
-    state_value = "-"
-    if centre.state:
-        state_value = centre.get_state_display()
-
-    status_value = "Active"
-    if not centre.is_active or (related_user is not None and not related_user.is_active):
-        status_value = "Inactive"
-
-    rows = [
-        ("ID", centre.formatted_id),
-        (
-            "Name",
-            _centre_pdf_join_values(centre.name, centre.owner_centre),
-        ),
-        (
-            "Username",
-            _centre_pdf_join_values(
-                centre.username,
-                getattr(related_user, "username", None),
-            ),
-        ),
-        (
-            "Email",
-            _centre_pdf_join_values(
-                centre.email,
-                getattr(related_user, "email", None),
-                centre.centre_email,
-            ),
-        ),
-        (
-            "VLC Number / Mobile",
-            _centre_pdf_join_values(
-                centre.mobile,
-                centre.alternative_mobile,
-                centre.centre_phone_number,
-            ),
-        ),
-        ("State", state_value),
-        ("District", _centre_pdf_display_value(centre.district)),
-        (
-            "Address",
-            _centre_pdf_join_values(centre.address, centre.centre_owner_address),
-        ),
-        ("Status", status_value),
-        (
-            "Joined Date",
-            _centre_pdf_field_value(related_user, User._meta.get_field("date_joined"))
-            if related_user is not None
-            else "-",
-        ),
-        ("User Account", _centre_pdf_related_value(related_user)),
-    ]
-
-    consumed_fields = {
-        "id",
-        "name",
-        "owner_centre",
-        "username",
-        "email",
-        "mobile",
-        "alternative_mobile",
-        "centre_phone_number",
-        "state",
-        "district",
-        "address",
-        "centre_owner_address",
-        "centre_email",
-        "is_active",
-        "user",
-    }
-    for field in CentreUserAccount._meta.fields:
-        if field.name in consumed_fields or _centre_pdf_is_sensitive_field(field.name):
-            continue
-        rows.append((_centre_pdf_field_label(field), _centre_pdf_field_value(centre, field)))
-
-    return rows
+def _centre_pdf_created_date(related_user):
+    value = getattr(related_user, "date_joined", None) if related_user else None
+    if value is None:
+        return "-"
+    if timezone.is_aware(value):
+        value = timezone.localtime(value)
+    return value.strftime("%d %b %Y %I:%M %p")
 
 
 class CentreUserListPDFView(AdminOrHeadOfficeRequiredMixin, View):
@@ -1094,7 +907,23 @@ class CentreUserListPDFView(AdminOrHeadOfficeRequiredMixin, View):
         return super().dispatch(request, *args, **kwargs)
 
     def get_queryset(self):
-        queryset = CentreUserAccount.objects.select_related("user", "created_by")
+        queryset = CentreUserAccount.objects.select_related("user").only(
+            "id",
+            "user",
+            "name",
+            "owner_centre",
+            "mobile",
+            "alternative_mobile",
+            "centre_phone_number",
+            "email",
+            "centre_email",
+            "state",
+            "district",
+            "is_active",
+            "user__email",
+            "user__is_active",
+            "user__date_joined",
+        )
         search_term = self.request.GET.get("search", "").strip()
         if search_term:
             queryset = queryset.filter(
@@ -1140,8 +969,8 @@ class CentreUserListPDFView(AdminOrHeadOfficeRequiredMixin, View):
             "CentreUserPdfHeader",
             parent=styles["Normal"],
             fontName="Helvetica-Bold",
-            fontSize=7,
-            leading=8,
+            fontSize=6.5,
+            leading=7.5,
             textColor=colors.white,
             alignment=TA_LEFT,
         )
@@ -1149,8 +978,8 @@ class CentreUserListPDFView(AdminOrHeadOfficeRequiredMixin, View):
             "CentreUserPdfCell",
             parent=styles["Normal"],
             fontName="Helvetica",
-            fontSize=7.2,
-            leading=8.6,
+            fontSize=6.8,
+            leading=8,
             textColor=colors.HexColor("#1e293b"),
             alignment=TA_LEFT,
         )
@@ -1164,29 +993,50 @@ class CentreUserListPDFView(AdminOrHeadOfficeRequiredMixin, View):
         table_data = [
             [
                 pdf_paragraph("ID", header_style),
-                pdf_paragraph("Centre / User", header_style),
-                pdf_paragraph("Field", header_style),
-                pdf_paragraph("Value", header_style),
+                pdf_paragraph("Name", header_style),
+                pdf_paragraph("Email", header_style),
+                pdf_paragraph("VLC / Mobile", header_style),
+                pdf_paragraph("State", header_style),
+                pdf_paragraph("District", header_style),
+                pdf_paragraph("Status", header_style),
+                pdf_paragraph("Created Date", header_style),
             ]
         ]
+
         for centre in queryset.iterator(chunk_size=500):
             try:
                 related_user = centre.user
             except ObjectDoesNotExist:
                 related_user = None
-            centre_user_label = _centre_pdf_join_values(
+
+            state_value = centre.get_state_display() if centre.state else "-"
+            status_value = "Active"
+            if not centre.is_active or (
+                related_user is not None and not related_user.is_active
+            ):
+                status_value = "Inactive"
+
+            row_values = [
+                centre.formatted_id,
                 centre.name or centre.owner_centre,
-                centre.username or getattr(related_user, "username", None),
+                _centre_pdf_join_values(
+                    centre.email,
+                    getattr(related_user, "email", None),
+                    centre.centre_email,
+                ),
+                _centre_pdf_join_values(
+                    centre.mobile,
+                    centre.alternative_mobile,
+                    centre.centre_phone_number,
+                ),
+                state_value,
+                _centre_pdf_display_value(centre.district),
+                status_value,
+                _centre_pdf_created_date(related_user),
+            ]
+            table_data.append(
+                [pdf_paragraph(value, cell_style) for value in row_values]
             )
-            for field_label, value in _centre_pdf_rows(centre):
-                table_data.append(
-                    [
-                        pdf_paragraph(centre.formatted_id, cell_style),
-                        pdf_paragraph(centre_user_label, cell_style),
-                        pdf_paragraph(field_label, cell_style),
-                        pdf_paragraph(value, cell_style),
-                    ]
-                )
 
         if total_users == 0:
             table_data.append(
@@ -1195,12 +1045,25 @@ class CentreUserListPDFView(AdminOrHeadOfficeRequiredMixin, View):
                     "",
                     "",
                     "",
+                    "",
+                    "",
+                    "",
+                    "",
                 ]
             )
 
         user_table = LongTable(
             table_data,
-            colWidths=[25 * mm, 48 * mm, 40 * mm, 160 * mm],
+            colWidths=[
+                16 * mm,
+                45 * mm,
+                50 * mm,
+                38 * mm,
+                30 * mm,
+                36 * mm,
+                25 * mm,
+                30 * mm,
+            ],
             repeatRows=1,
             splitByRow=1,
             hAlign="LEFT",
@@ -1210,10 +1073,10 @@ class CentreUserListPDFView(AdminOrHeadOfficeRequiredMixin, View):
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
             ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cbd5e1")),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 4),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-            ("TOPPADDING", (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
             (
                 "ROWBACKGROUNDS",
                 (0, 1),
