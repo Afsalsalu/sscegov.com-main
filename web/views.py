@@ -1698,6 +1698,325 @@ class AddStateDeleteView(AdminOrHeadOfficeRequiredMixin, DeleteView):
         return HttpResponseRedirect(success_url)
 
 
+SERVICE_EXPORT_FIELD_DEFINITIONS = {
+    "service_name": {"label": "Service Name", "width": 28},
+    "state": {"label": "State", "width": 22},
+    "service_link": {"label": "Service URL", "width": 42},
+    "status": {"label": "Status", "width": 14},
+    "popular": {"label": "Popular", "width": 14},
+    "created_at": {"label": "Created Date", "width": 22},
+    "updated_at": {"label": "Updated Date", "width": 22},
+}
+SERVICE_EXPORT_REQUIRED_FIELDS = {"service_name"}
+
+
+def _service_export_value(service, field_name):
+    if field_name == "service_name":
+        return getattr(service, "service_name", None)
+    if field_name == "state":
+        state = getattr(service, "state", None)
+        return getattr(state, "state_name", None) if state else None
+    if field_name == "status":
+        is_active = getattr(service, "is_active", None)
+        return "Active" if is_active is True else "Inactive" if is_active is False else None
+    if field_name == "popular":
+        is_popular = getattr(service, "is_popular", None)
+        return "Yes" if is_popular is True else "No" if is_popular is False else None
+    return getattr(service, field_name, None)
+
+
+def _service_export_pdf_value(value):
+    if value is None:
+        return "-"
+    if isinstance(value, datetime):
+        if timezone.is_aware(value):
+            value = timezone.localtime(value)
+        return value.strftime("%d %b %Y %I:%M %p")
+    cleaned_value = str(value).strip()
+    return cleaned_value or "-"
+
+
+def _service_export_excel_value(value):
+    if value is None:
+        return None
+    if isinstance(value, datetime) and timezone.is_aware(value):
+        return timezone.localtime(value).replace(tzinfo=None)
+    return value
+
+
+class _ServiceListExportBaseView(AdminOrHeadOfficeRequiredMixin, View):
+    def get_export_fields(self):
+        raw_fields = self.request.GET.getlist("fields")
+        if len(raw_fields) == 1 and "," in raw_fields[0]:
+            raw_fields = [field.strip() for field in raw_fields[0].split(",")]
+
+        if not raw_fields or any(
+            field not in SERVICE_EXPORT_FIELD_DEFINITIONS for field in raw_fields
+        ):
+            return None
+
+        selected_fields = []
+        for field in raw_fields:
+            if field not in selected_fields:
+                selected_fields.append(field)
+        if not SERVICE_EXPORT_REQUIRED_FIELDS.issubset(selected_fields):
+            return None
+        return selected_fields
+
+    def get_queryset(self):
+        queryset = (
+            StateService.objects.select_related("state")
+            .only(
+                "pk",
+                "state",
+                "state__state_name",
+                "service_name",
+                "service_link",
+                "created_at",
+                "updated_at",
+                "is_active",
+                "is_popular",
+            )
+            .order_by("state__state_name", "service_name", "pk")
+        )
+        search_term = self.request.GET.get("search", "").strip()
+        if search_term:
+            queryset = queryset.filter(state__state_name__icontains=search_term)
+        return queryset
+
+
+class ServiceListPDFExportView(_ServiceListExportBaseView):
+    def get(self, request, *args, **kwargs):
+        selected_fields = self.get_export_fields()
+        if selected_fields is None:
+            return HttpResponseBadRequest("Invalid service export fields.")
+
+        queryset = self.get_queryset()
+        total_services = queryset.count()
+        generated_at = timezone.localtime(timezone.now())
+        generated_at_text = generated_at.strftime("%d %b %Y %I:%M %p")
+        search_term = request.GET.get("search", "").strip()
+
+        buffer = BytesIO()
+        document = SimpleDocTemplate(
+            buffer,
+            pagesize=landscape(A4),
+            leftMargin=12 * mm,
+            rightMargin=12 * mm,
+            topMargin=25 * mm,
+            bottomMargin=15 * mm,
+            title="Service List",
+            author="SSCEGOV Head Office",
+        )
+
+        styles = getSampleStyleSheet()
+        meta_style = ParagraphStyle(
+            "ServiceExportPdfMeta",
+            parent=styles["Normal"],
+            fontName=CENTRE_USER_PDF_BODY_FONT,
+            fontSize=8,
+            leading=10,
+            textColor=colors.HexColor("#334155"),
+            spaceAfter=5,
+        )
+        header_style = ParagraphStyle(
+            "ServiceExportPdfHeader",
+            parent=styles["Normal"],
+            fontName=CENTRE_USER_PDF_HEADING_FONT,
+            fontSize=7,
+            leading=8,
+            textColor=colors.white,
+            alignment=TA_LEFT,
+        )
+        cell_style = ParagraphStyle(
+            "ServiceExportPdfCell",
+            parent=styles["Normal"],
+            fontName=CENTRE_USER_PDF_BODY_FONT,
+            fontSize=7,
+            leading=8.5,
+            textColor=colors.HexColor("#1e293b"),
+            alignment=TA_LEFT,
+        )
+
+        def pdf_paragraph(value, style):
+            safe_value = escape(_service_export_pdf_value(value)).replace(
+                "\r\n", "<br/>"
+            ).replace("\n", "<br/>")
+            return Paragraph(safe_value, style)
+
+        table_data = [
+            [
+                pdf_paragraph(SERVICE_EXPORT_FIELD_DEFINITIONS[field]["label"], header_style)
+                for field in selected_fields
+            ]
+        ]
+        for service in queryset.iterator(chunk_size=500):
+            table_data.append(
+                [
+                    pdf_paragraph(
+                        _service_export_value(service, field),
+                        cell_style,
+                    )
+                    for field in selected_fields
+                ]
+            )
+
+        if total_services == 0:
+            table_data.append(
+                [pdf_paragraph("No services found.", cell_style)]
+                + [""] * (len(selected_fields) - 1)
+            )
+
+        available_width = landscape(A4)[0] - (24 * mm)
+        base_widths = [
+            SERVICE_EXPORT_FIELD_DEFINITIONS[field]["width"] for field in selected_fields
+        ]
+        width_scale = available_width / (sum(base_widths) * mm)
+        column_widths = [width * mm * width_scale for width in base_widths]
+        service_table = LongTable(
+            table_data,
+            colWidths=column_widths,
+            repeatRows=1,
+            splitByRow=1,
+            hAlign="LEFT",
+        )
+        table_commands = [
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#007A9B")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cbd5e1")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            (
+                "ROWBACKGROUNDS",
+                (0, 1),
+                (-1, -1),
+                [colors.white, colors.HexColor("#f8fafc")],
+            ),
+        ]
+        if total_services == 0:
+            table_commands.append(("SPAN", (0, 1), (-1, 1)))
+        service_table.setStyle(TableStyle(table_commands))
+
+        def draw_pdf_page(canvas, doc):
+            page_width, page_height = landscape(A4)
+            canvas.saveState()
+            canvas.setFillColor(colors.HexColor("#007A9B"))
+            canvas.rect(
+                0,
+                page_height - (17 * mm),
+                page_width,
+                17 * mm,
+                fill=1,
+                stroke=0,
+            )
+            canvas.setFillColor(colors.white)
+            canvas.setFont(CENTRE_USER_PDF_HEADING_FONT, 13)
+            canvas.drawString(doc.leftMargin, page_height - (11 * mm), "Service List")
+            canvas.setFont(CENTRE_USER_PDF_BODY_FONT, 7)
+            canvas.drawRightString(
+                page_width - doc.rightMargin,
+                page_height - (11 * mm),
+                f"Generated: {generated_at_text}",
+            )
+            canvas.setStrokeColor(colors.HexColor("#cbd5e1"))
+            canvas.line(
+                doc.leftMargin,
+                12 * mm,
+                page_width - doc.rightMargin,
+                12 * mm,
+            )
+            canvas.setFillColor(colors.HexColor("#475569"))
+            canvas.setFont(CENTRE_USER_PDF_BODY_FONT, 7)
+            canvas.drawString(
+                doc.leftMargin,
+                7 * mm,
+                f"Total services: {total_services}",
+            )
+            canvas.drawRightString(
+                page_width - doc.rightMargin,
+                7 * mm,
+                f"Page {doc.page}",
+            )
+            canvas.restoreState()
+
+        metadata = (
+            f"Generated: {generated_at_text} &nbsp;&nbsp;|&nbsp;&nbsp; "
+            f"Total services: {total_services}"
+        )
+        if search_term:
+            metadata += f" &nbsp;&nbsp;|&nbsp;&nbsp; Search: {escape(search_term)}"
+        story = [Paragraph(metadata, meta_style), Spacer(1, 2 * mm), service_table]
+        document.build(story, onFirstPage=draw_pdf_page, onLaterPages=draw_pdf_page)
+
+        buffer.seek(0)
+        response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
+        response["Content-Disposition"] = 'attachment; filename="service_list.pdf"'
+        return response
+
+
+class ServiceListExcelExportView(_ServiceListExportBaseView):
+    def get(self, request, *args, **kwargs):
+        selected_fields = self.get_export_fields()
+        if selected_fields is None:
+            return HttpResponseBadRequest("Invalid service export fields.")
+
+        from openpyxl import Workbook
+        from openpyxl.cell import WriteOnlyCell
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.utils import get_column_letter
+
+        queryset = self.get_queryset()
+        total_services = queryset.count()
+        workbook = Workbook(write_only=True)
+        worksheet = workbook.create_sheet(title="Services")
+        worksheet.freeze_panes = "A2"
+        worksheet.sheet_view.showGridLines = False
+
+        for index, field in enumerate(selected_fields, start=1):
+            column_letter = get_column_letter(index)
+            worksheet.column_dimensions[column_letter].width = SERVICE_EXPORT_FIELD_DEFINITIONS[
+                field
+            ]["width"]
+
+        header_row = []
+        for field in selected_fields:
+            header_cell = WriteOnlyCell(
+                worksheet,
+                value=SERVICE_EXPORT_FIELD_DEFINITIONS[field]["label"],
+            )
+            header_cell.font = Font(name="Arial", bold=True, color="FFFFFF")
+            header_cell.fill = PatternFill("solid", fgColor="007A9B")
+            header_cell.alignment = Alignment(horizontal="center", vertical="center")
+            header_row.append(header_cell)
+        worksheet.append(header_row)
+
+        for service in queryset.iterator(chunk_size=1000):
+            worksheet.append(
+                [
+                    _service_export_excel_value(
+                        _service_export_value(service, field)
+                    )
+                    for field in selected_fields
+                ]
+            )
+
+        worksheet.auto_filter.ref = (
+            f"A1:{get_column_letter(len(selected_fields))}{total_services + 1}"
+        )
+        output = BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        response = HttpResponse(
+            output.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = 'attachment; filename="service_list.xlsx"'
+        return response
+
+
 class StateServiceListView(AdminOrHeadOfficeRequiredMixin, ListView):
     model = StateService
     template_name = "web/admin_panel/services/stateservice_list.html"
@@ -1777,6 +2096,7 @@ class AllSectionView(AdminOrHeadOfficeRequiredMixin, TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["states"] = AddState.objects.all()
+        context["service_export_fields"] = SERVICE_EXPORT_FIELD_DEFINITIONS
         return context
 
 

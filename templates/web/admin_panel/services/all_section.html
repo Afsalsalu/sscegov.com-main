@@ -21,6 +21,14 @@
                 />
                 <div class="lg:col-span-6 lg:col-start-10">
                   <div class="flex gap-2 lg:justify-end">
+                    <button
+                      id="openServiceExport"
+                      type="button"
+                      class="text-white btn bg-slate-600 border-slate-600 hover:text-white hover:bg-slate-700 hover:border-slate-700 focus:text-white focus:bg-slate-700 focus:border-slate-700 focus:ring focus:ring-slate-200 active:text-white active:bg-slate-700 active:border-slate-700"
+                    >
+                      <i data-lucide="download" class="inline-block size-4"></i>
+                      <span class="align-middle">Export Services</span>
+                    </button>
                     <a href="{% url 'web:addstate_list' %}">
                       <button
                         data-modal-target="addUserModal"
@@ -60,7 +68,68 @@
     </div>
 </div>
 
+<div
+  id="serviceExportModal"
+  class="fixed inset-0 z-[2000] hidden items-center justify-center bg-slate-900/50 p-4"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="serviceExportModalTitle"
+  aria-hidden="true"
+>
+  <div class="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg bg-white shadow-xl dark:bg-zink-700">
+    <div class="flex items-center justify-between border-b border-slate-200 p-5 dark:border-zink-500">
+      <div>
+        <h5 id="serviceExportModalTitle" class="text-lg font-semibold text-slate-800 dark:text-zink-100">Export Services</h5>
+        <p class="mt-1 text-sm text-slate-500 dark:text-zink-200">Select fields to export</p>
+      </div>
+      <button id="closeServiceExport" type="button" class="text-2xl leading-none text-slate-500 hover:text-slate-800 dark:text-zink-200 dark:hover:text-white" aria-label="Close">&times;</button>
+    </div>
 
+    <form
+      id="serviceExportForm"
+      method="get"
+      action="{% url 'web:stateservice_export_pdf' %}"
+      data-pdf-url="{% url 'web:stateservice_export_pdf' %}"
+      data-excel-url="{% url 'web:stateservice_export_excel' %}"
+      class="p-5"
+    >
+      <input id="serviceExportSearch" type="hidden" name="search" value="">
+
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <p class="text-sm text-slate-600 dark:text-zink-100">Service Name is required.</p>
+        <div class="flex gap-3 text-sm">
+          <button id="selectAllServiceFields" type="button" class="text-custom-600 hover:text-custom-700 dark:text-custom-400">Select All</button>
+          <button id="clearAllServiceFields" type="button" class="text-slate-500 hover:text-slate-700 dark:text-zink-200">Clear All</button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {% for field_name, field in service_export_fields.items %}
+        <label class="flex cursor-pointer items-center gap-3 rounded-md border border-slate-200 px-3 py-2.5 dark:border-zink-500">
+          <input
+            type="checkbox"
+            name="fields"
+            value="{{ field_name }}"
+            class="service-export-field size-4 rounded border-slate-300 text-custom-500 focus:ring-custom-500"
+            {% if field_name == 'service_name' %}checked data-required="true"{% endif %}
+          >
+          <span class="text-sm text-slate-700 dark:text-zink-100">{{ field.label }}</span>
+          {% if field_name == 'service_name' %}<span class="ml-auto text-xs text-slate-400">Required</span>{% endif %}
+        </label>
+        {% endfor %}
+      </div>
+
+      <div class="mt-6 flex flex-col-reverse justify-end gap-2 sm:flex-row">
+        <button id="cancelServiceExport" type="button" class="btn border border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-zink-500 dark:text-zink-100 dark:hover:bg-zink-600">Cancel</button>
+        <button type="submit" data-export-url="{% url 'web:stateservice_export_pdf' %}" class="service-export-submit btn bg-custom-500 text-white hover:bg-custom-600 disabled:cursor-not-allowed disabled:opacity-50" disabled>Download PDF</button>
+        <button type="submit" data-export-url="{% url 'web:stateservice_export_excel' %}" class="service-export-submit btn bg-emerald-600 text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50" disabled>Download Excel</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+
+<script src="{% static 'web/js/service-export.js' %}"></script>
 <script src="{% static 'web/js/state-list-main-page.js' %}"></script>
 
 {% endblock %}
