@@ -45,7 +45,8 @@ from django.contrib.auth.views import (PasswordResetCompleteView,
                                        PasswordResetConfirmView,
                                        PasswordResetDoneView,
                                        PasswordResetView)
-from django.core.exceptions import ObjectDoesNotExist
+from django.core.exceptions import ObjectDoesNotExist, ValidationError
+from django.core.validators import validate_email
 from django.http import Http404, HttpResponseBadRequest
 from django.template.loader import render_to_string
 from django.utils.decorators import method_decorator
@@ -871,30 +872,131 @@ class AdminCentreUserListView(AdminOrHeadOfficeRequiredMixin, ListView):
         return context
 
 
+def _centre_pdf_clean_text(value):
+    if value is None:
+        return ""
+    cleaned_value = str(value).strip()
+    if (
+        not cleaned_value
+        or cleaned_value.lower() == "none"
+        or cleaned_value.lower().startswith("none@")
+    ):
+        return ""
+    return cleaned_value
+
+
+def _centre_pdf_clean_name(value):
+    cleaned_value = _centre_pdf_clean_text(value)
+    if not cleaned_value:
+        return ""
+    return " ".join(
+        part for part in cleaned_value.split() if part.lower() != "none"
+    )
+
+
 def _centre_pdf_display_value(value):
-    if value is None or value == "":
-        return "-"
-    return str(value)
+    return _centre_pdf_clean_text(value) or "-"
 
 
 def _centre_pdf_join_values(*values):
     joined_values = []
     for value in values:
-        if value is None or value == "":
-            continue
-        value = str(value)
-        if value not in joined_values:
-            joined_values.append(value)
+        for candidate in _centre_pdf_clean_text(value).split("/"):
+            cleaned_value = _centre_pdf_clean_text(candidate)
+            if cleaned_value and cleaned_value not in joined_values:
+                joined_values.append(cleaned_value)
     return " / ".join(joined_values) or "-"
+
+
+def _centre_pdf_valid_email(value):
+    cleaned_value = _centre_pdf_clean_text(value)
+    if not cleaned_value or cleaned_value.lower().startswith("none@"):
+        return ""
+    try:
+        validate_email(cleaned_value)
+    except ValidationError:
+        return ""
+    return cleaned_value
+
+
+def _centre_pdf_join_emails(*values):
+    joined_emails = []
+    for value in values:
+        for candidate in _centre_pdf_clean_text(value).split("/"):
+            email = _centre_pdf_valid_email(candidate)
+            if email and email.lower() not in {
+                existing.lower() for existing in joined_emails
+            }:
+                joined_emails.append(email)
+    return " / ".join(joined_emails) or "-"
+
+
+def _centre_pdf_related_user_name(related_user):
+    if related_user is None:
+        return ""
+
+    get_full_name = getattr(related_user, "get_full_name", None)
+    if callable(get_full_name):
+        try:
+            full_name = _centre_pdf_clean_name(get_full_name())
+        except Exception:
+            full_name = ""
+        if full_name:
+            return full_name
+
+    first_name = _centre_pdf_clean_name(getattr(related_user, "first_name", None))
+    last_name = _centre_pdf_clean_name(getattr(related_user, "last_name", None))
+    return _centre_pdf_clean_name(" ".join(filter(None, (first_name, last_name))))
+
+
+def _centre_pdf_name(centre, related_user):
+    for field_name in ("name", "owner_centre"):
+        name = _centre_pdf_clean_name(getattr(centre, field_name, None))
+        if name:
+            return name
+
+    related_name = _centre_pdf_related_user_name(related_user)
+    if related_name:
+        return related_name
+
+    return _centre_pdf_clean_text(getattr(related_user, "username", None)) or "-"
+
+
+def _centre_pdf_state(centre):
+    state = getattr(centre, "state", None)
+    if not _centre_pdf_clean_text(state):
+        return "-"
+    try:
+        state = centre.get_state_display()
+    except AttributeError:
+        pass
+    return _centre_pdf_display_value(state)
+
+
+def _centre_pdf_status(centre, related_user):
+    active_values = [
+        value
+        for value in (
+            getattr(centre, "is_active", None),
+            getattr(related_user, "is_active", None),
+        )
+        if value is True or value is False
+    ]
+    if not active_values:
+        return "-"
+    return "Inactive" if any(value is False for value in active_values) else "Active"
 
 
 def _centre_pdf_created_date(related_user):
     value = getattr(related_user, "date_joined", None) if related_user else None
-    if value is None:
+    if value is None or (isinstance(value, str) and not _centre_pdf_clean_text(value)):
         return "-"
-    if timezone.is_aware(value):
-        value = timezone.localtime(value)
-    return value.strftime("%d %b %Y %I:%M %p")
+    try:
+        if timezone.is_aware(value):
+            value = timezone.localtime(value)
+        return value.strftime("%d %b %Y %I:%M %p")
+    except (AttributeError, TypeError, ValueError):
+        return "-"
 
 
 class CentreUserListPDFView(AdminOrHeadOfficeRequiredMixin, View):
@@ -1006,20 +1108,13 @@ class CentreUserListPDFView(AdminOrHeadOfficeRequiredMixin, View):
         for centre in queryset.iterator(chunk_size=500):
             try:
                 related_user = centre.user
-            except ObjectDoesNotExist:
+            except (AttributeError, ObjectDoesNotExist):
                 related_user = None
 
-            state_value = centre.get_state_display() if centre.state else "-"
-            status_value = "Active"
-            if not centre.is_active or (
-                related_user is not None and not related_user.is_active
-            ):
-                status_value = "Inactive"
-
             row_values = [
-                centre.formatted_id,
-                centre.name or centre.owner_centre,
-                _centre_pdf_join_values(
+                _centre_pdf_display_value(getattr(centre, "formatted_id", None)),
+                _centre_pdf_name(centre, related_user),
+                _centre_pdf_join_emails(
                     centre.email,
                     getattr(related_user, "email", None),
                     centre.centre_email,
@@ -1029,9 +1124,9 @@ class CentreUserListPDFView(AdminOrHeadOfficeRequiredMixin, View):
                     centre.alternative_mobile,
                     centre.centre_phone_number,
                 ),
-                state_value,
-                _centre_pdf_display_value(centre.district),
-                status_value,
+                _centre_pdf_state(centre),
+                _centre_pdf_display_value(getattr(centre, "district", None)),
+                _centre_pdf_status(centre, related_user),
                 _centre_pdf_created_date(related_user),
             ]
             table_data.append(
