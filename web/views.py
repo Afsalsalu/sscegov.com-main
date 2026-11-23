@@ -33,6 +33,9 @@ from xml.sax.saxutils import escape
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
+
+SERVICE_PDF_BODY_FONT = "Helvetica"
+SERVICE_PDF_HEADING_FONT = "Helvetica-Bold"
 import logging
 from decimal import Decimal
 
@@ -1813,7 +1816,7 @@ class ServiceListPDFExportView(_ServiceListExportBaseView):
         meta_style = ParagraphStyle(
             "ServiceExportPdfMeta",
             parent=styles["Normal"],
-            fontName=CENTRE_USER_PDF_BODY_FONT,
+            fontName=SERVICE_PDF_BODY_FONT,
             fontSize=8,
             leading=10,
             textColor=colors.HexColor("#334155"),
@@ -1822,7 +1825,7 @@ class ServiceListPDFExportView(_ServiceListExportBaseView):
         header_style = ParagraphStyle(
             "ServiceExportPdfHeader",
             parent=styles["Normal"],
-            fontName=CENTRE_USER_PDF_HEADING_FONT,
+            fontName=SERVICE_PDF_HEADING_FONT,
             fontSize=7,
             leading=8,
             textColor=colors.white,
@@ -1831,7 +1834,7 @@ class ServiceListPDFExportView(_ServiceListExportBaseView):
         cell_style = ParagraphStyle(
             "ServiceExportPdfCell",
             parent=styles["Normal"],
-            fontName=CENTRE_USER_PDF_BODY_FONT,
+            fontName=SERVICE_PDF_BODY_FONT,
             fontSize=7,
             leading=8.5,
             textColor=colors.HexColor("#1e293b"),
@@ -1913,9 +1916,9 @@ class ServiceListPDFExportView(_ServiceListExportBaseView):
                 stroke=0,
             )
             canvas.setFillColor(colors.white)
-            canvas.setFont(CENTRE_USER_PDF_HEADING_FONT, 13)
+            canvas.setFont(SERVICE_PDF_HEADING_FONT, 13)
             canvas.drawString(doc.leftMargin, page_height - (11 * mm), "Service List")
-            canvas.setFont(CENTRE_USER_PDF_BODY_FONT, 7)
+            canvas.setFont(SERVICE_PDF_BODY_FONT, 7)
             canvas.drawRightString(
                 page_width - doc.rightMargin,
                 page_height - (11 * mm),
@@ -1929,7 +1932,7 @@ class ServiceListPDFExportView(_ServiceListExportBaseView):
                 12 * mm,
             )
             canvas.setFillColor(colors.HexColor("#475569"))
-            canvas.setFont(CENTRE_USER_PDF_BODY_FONT, 7)
+            canvas.setFont(SERVICE_PDF_BODY_FONT, 7)
             canvas.drawString(
                 doc.leftMargin,
                 7 * mm,
