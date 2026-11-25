@@ -1711,6 +1711,7 @@ SERVICE_EXPORT_FIELD_DEFINITIONS = {
     "updated_at": {"label": "Updated Date", "width": 22},
 }
 SERVICE_EXPORT_REQUIRED_FIELDS = {"service_name"}
+SERVICE_EXPORT_ALL_STATES_LABEL = "All States"
 
 
 def _service_export_value(service, field_name):
@@ -1748,6 +1749,33 @@ def _service_export_excel_value(value):
 
 
 class _ServiceListExportBaseView(AdminOrHeadOfficeRequiredMixin, View):
+    def get_export_state(self):
+        """Return the requested active state, or a validation error message."""
+        raw_state_id = self.request.GET.get("state_id", "").strip()
+        if not raw_state_id:
+            return None, None
+
+        try:
+            state_id = int(raw_state_id)
+        except (TypeError, ValueError):
+            return None, "Invalid service export state."
+
+        if state_id <= 0:
+            return None, "Invalid service export state."
+
+        try:
+            state = (
+                AddState.objects.filter(
+                    pk=state_id,
+                    services__is_active=True,
+                )
+                .distinct()
+                .get()
+            )
+        except AddState.DoesNotExist:
+            return None, "Invalid or inactive service export state."
+        return state, None
+
     def get_export_fields(self):
         raw_fields = self.request.GET.getlist("fields")
         if len(raw_fields) == 1 and "," in raw_fields[0]:
@@ -1766,7 +1794,7 @@ class _ServiceListExportBaseView(AdminOrHeadOfficeRequiredMixin, View):
             return None
         return selected_fields
 
-    def get_queryset(self):
+    def get_queryset(self, state=None):
         queryset = (
             StateService.objects.select_related("state")
             .only(
@@ -1782,6 +1810,8 @@ class _ServiceListExportBaseView(AdminOrHeadOfficeRequiredMixin, View):
             )
             .order_by("state__state_name", "service_name", "pk")
         )
+        if state is not None:
+            queryset = queryset.filter(state=state)
         search_term = self.request.GET.get("search", "").strip()
         if search_term:
             queryset = queryset.filter(state__state_name__icontains=search_term)
@@ -1794,11 +1824,21 @@ class ServiceListPDFExportView(_ServiceListExportBaseView):
         if selected_fields is None:
             return HttpResponseBadRequest("Invalid service export fields.")
 
-        queryset = self.get_queryset()
+        selected_state, state_error = self.get_export_state()
+        if state_error:
+            return HttpResponseBadRequest(state_error)
+
+        queryset = self.get_queryset(selected_state)
         total_services = queryset.count()
         generated_at = timezone.localtime(timezone.now())
         generated_at_text = generated_at.strftime("%d %b %Y %I:%M %p")
         search_term = request.GET.get("search", "").strip()
+        state_scope_label = (
+            selected_state.state_name
+            if selected_state is not None
+            else SERVICE_EXPORT_ALL_STATES_LABEL
+        )
+        document_title = f"Service List - {state_scope_label}"
 
         buffer = BytesIO()
         document = SimpleDocTemplate(
@@ -1808,7 +1848,7 @@ class ServiceListPDFExportView(_ServiceListExportBaseView):
             rightMargin=12 * mm,
             topMargin=25 * mm,
             bottomMargin=15 * mm,
-            title="Service List",
+            title=document_title,
             author="SSCEGOV Head Office",
         )
 
@@ -1917,7 +1957,7 @@ class ServiceListPDFExportView(_ServiceListExportBaseView):
             )
             canvas.setFillColor(colors.white)
             canvas.setFont(SERVICE_PDF_HEADING_FONT, 13)
-            canvas.drawString(doc.leftMargin, page_height - (11 * mm), "Service List")
+            canvas.drawString(doc.leftMargin, page_height - (11 * mm), document_title)
             canvas.setFont(SERVICE_PDF_BODY_FONT, 7)
             canvas.drawRightString(
                 page_width - doc.rightMargin,
@@ -1946,6 +1986,7 @@ class ServiceListPDFExportView(_ServiceListExportBaseView):
             canvas.restoreState()
 
         metadata = (
+            f"Scope: {escape(state_scope_label)} &nbsp;&nbsp;|&nbsp;&nbsp; "
             f"Generated: {generated_at_text} &nbsp;&nbsp;|&nbsp;&nbsp; "
             f"Total services: {total_services}"
         )
@@ -1966,15 +2007,28 @@ class ServiceListExcelExportView(_ServiceListExportBaseView):
         if selected_fields is None:
             return HttpResponseBadRequest("Invalid service export fields.")
 
+        selected_state, state_error = self.get_export_state()
+        if state_error:
+            return HttpResponseBadRequest(state_error)
+
         from openpyxl import Workbook
         from openpyxl.cell import WriteOnlyCell
         from openpyxl.styles import Alignment, Font, PatternFill
         from openpyxl.utils import get_column_letter
 
-        queryset = self.get_queryset()
+        queryset = self.get_queryset(selected_state)
         total_services = queryset.count()
         workbook = Workbook(write_only=True)
-        worksheet = workbook.create_sheet(title="Services")
+        state_scope_label = (
+            selected_state.state_name
+            if selected_state is not None
+            else SERVICE_EXPORT_ALL_STATES_LABEL
+        )
+        worksheet_title = f"Service List - {state_scope_label}"
+        for invalid_character in "[]:*?/\\":
+            worksheet_title = worksheet_title.replace(invalid_character, "-")
+        workbook.properties.title = f"Service List - {state_scope_label}"
+        worksheet = workbook.create_sheet(title=worksheet_title[:31])
         worksheet.freeze_panes = "A2"
         worksheet.sheet_view.showGridLines = False
 
@@ -2099,6 +2153,11 @@ class AllSectionView(AdminOrHeadOfficeRequiredMixin, TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["states"] = AddState.objects.all()
+        context["service_export_states"] = (
+            AddState.objects.filter(services__is_active=True)
+            .distinct()
+            .order_by("state_name", "pk")
+        )
         context["service_export_fields"] = SERVICE_EXPORT_FIELD_DEFINITIONS
         return context
 

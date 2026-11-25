@@ -95,6 +95,20 @@
     >
       <input id="serviceExportSearch" type="hidden" name="search" value="">
 
+      <div class="mb-5">
+        <label for="serviceExportState" class="mb-2 block text-sm font-medium text-slate-700 dark:text-zink-100">Export scope</label>
+        <select
+          id="serviceExportState"
+          name="state_id"
+          class="form-select w-full border-slate-200 dark:border-zink-500 dark:bg-zink-700 dark:text-zink-100 focus:border-custom-500 focus:ring-custom-500"
+        >
+          <option value="">All States</option>
+          {% for state in service_export_states %}
+          <option value="{{ state.pk }}">{{ state.state_name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
       <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
         <p class="text-sm text-slate-600 dark:text-zink-100">Service Name is required.</p>
         <div class="flex gap-3 text-sm">
