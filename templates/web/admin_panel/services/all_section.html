@@ -135,15 +135,15 @@
 
       <div class="mt-6 flex flex-col items-stretch justify-end gap-2 sm:flex-row sm:items-center">
         <button id="cancelServiceExport" type="button" class="btn border border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-zink-500 dark:text-zink-100 dark:hover:bg-zink-600">Cancel</button>
-        <button id="downloadServicePdf" type="submit" formaction="{% url 'web:stateservice_export_pdf' %}" data-export-url="{% url 'web:stateservice_export_pdf' %}" class="service-export-submit btn w-full bg-custom-500 text-white hover:bg-custom-600 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto" disabled>Download PDF</button>
-        <button id="downloadServiceExcel" type="submit" formaction="{% url 'web:stateservice_export_excel' %}" data-export-url="{% url 'web:stateservice_export_excel' %}" class="service-export-submit btn w-full bg-emerald-600 text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto" disabled>Download Excel</button>
+        <button id="downloadServicePdf" type="submit" formaction="{% url 'web:stateservice_export_pdf' %}" data-export-url="{% url 'web:stateservice_export_pdf' %}" class="service-export-submit btn w-full bg-blue-600 text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto" disabled>Download PDF</button>
+        <button id="downloadExcelBtn" type="submit" formaction="{% url 'web:stateservice_export_excel' %}" data-export-url="{% url 'web:stateservice_export_excel' %}" class="service-export-submit btn w-full bg-emerald-600 text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto" disabled>Download Excel</button>
       </div>
     </form>
   </div>
 </div>
 
 
-<script src="{% static 'web/js/service-export.js' %}"></script>
+<script src="{% static 'web/js/service-export.js' %}?v=20261126-1"></script>
 <script src="{% static 'web/js/state-list-main-page.js' %}"></script>
 
 {% endblock %}
