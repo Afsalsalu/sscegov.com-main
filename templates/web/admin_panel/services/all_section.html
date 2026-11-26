@@ -135,8 +135,10 @@
 
       <div class="mt-6 flex flex-col items-stretch justify-end gap-2 sm:flex-row sm:items-center">
         <button id="cancelServiceExport" type="button" class="btn border border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-zink-500 dark:text-zink-100 dark:hover:bg-zink-600">Cancel</button>
-        <button id="downloadServicePdf" type="submit" formaction="{% url 'web:stateservice_export_pdf' %}" data-export-url="{% url 'web:stateservice_export_pdf' %}" class="service-export-submit btn w-full bg-blue-600 text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto" disabled>Download PDF</button>
-        <button id="downloadExcelBtn" type="submit" formaction="{% url 'web:stateservice_export_excel' %}" data-export-url="{% url 'web:stateservice_export_excel' %}" class="service-export-submit btn w-full bg-emerald-600 text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto" disabled>Download Excel</button>
+        <button id="downloadPdfBtn" type="submit" formaction="{% url 'web:stateservice_export_pdf' %}" data-export-url="{% url 'web:stateservice_export_pdf' %}" class="service-export-submit btn w-full bg-blue-600 text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto" disabled>Download PDF</button>
+        <button type="button" id="downloadExcelBtn" class="btn btn-success" data-export-url="{% url 'web:stateservice_export_excel' %}">
+          Download Excel
+        </button>
       </div>
     </form>
   </div>
@@ -145,5 +147,25 @@
 
 <script src="{% static 'web/js/service-export.js' %}?v=20261126-1"></script>
 <script src="{% static 'web/js/state-list-main-page.js' %}"></script>
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    const excelButton = document.getElementById("downloadExcelBtn");
+    const form = document.getElementById("serviceExportForm");
+    const searchInput = document.getElementById("searchInput");
+    const exportSearch = document.getElementById("serviceExportSearch");
+
+    if (!excelButton || !form) {
+      return;
+    }
+
+    excelButton.addEventListener("click", function () {
+      if (searchInput && exportSearch) {
+        exportSearch.value = searchInput.value.trim();
+      }
+      form.action = excelButton.dataset.exportUrl;
+      form.submit();
+    });
+  });
+</script>
 
 {% endblock %}
